@@ -34,6 +34,11 @@
             max-height: 400px;
             overflow-y: auto;
         }
+        .request-content-cell {
+            max-width: 400px;
+            word-break: break-all;
+            white-space: pre-wrap;
+        }
     </style>
 </head>
 <body>
@@ -143,6 +148,125 @@
                     <div class="modal-body">
                         <div id="detail-content">
                             <!-- 詳細内容がここに表示されます -->
+                        </div>
+                        <div class="mt-3">
+                            <button class="btn btn-success" onclick="executeRequests()">
+                                <i class="fas fa-play"></i> HTTPリクエストを実行
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 実行設定モーダル -->
+        <div class="modal fade" id="executeModal" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">HTTPリクエスト実行設定</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <form id="execute-form">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="scheme" class="form-label">プロトコル</label>
+                                        <select class="form-select" id="scheme">
+                                            <option value="http">HTTP</option>
+                                            <option value="https">HTTPS</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="base-url" class="form-label">ベースURL</label>
+                                        <input type="text" class="form-control" id="base-url" value="localhost:8000" placeholder="example.com:443">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label for="timeout" class="form-label">タイムアウト（秒）</label>
+                                <input type="number" class="form-control" id="timeout" value="30" min="1" max="300">
+                            </div>
+                            <div class="mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="follow-redirects" checked>
+                                    <label class="form-check-label" for="follow-redirects">
+                                        リダイレクトを追跡
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="verify-ssl">
+                                    <label class="form-check-label" for="verify-ssl">
+                                        SSL証明書を検証
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label for="additional-headers" class="form-label">追加ヘッダー（JSON形式）</label>
+                                <textarea class="form-control" id="additional-headers" rows="3" placeholder='{"User-Agent": "Custom-Agent/1.0"}'></textarea>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">キャンセル</button>
+                        <button type="button" class="btn btn-primary" onclick="confirmExecute()">
+                            <i class="fas fa-play"></i> 実行開始
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 実行結果モーダル -->
+        <div class="modal fade" id="resultModal" tabindex="-1">
+            <div class="modal-dialog modal-xl">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">HTTPリクエスト実行結果</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="row mb-3">
+                            <div class="col-md-3">
+                                <div class="card bg-primary text-white">
+                                    <div class="card-body text-center">
+                                        <h4 id="total-executed">-</h4>
+                                        <p>総リクエスト数</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card bg-success text-white">
+                                    <div class="card-body text-center">
+                                        <h4 id="successful-executed">-</h4>
+                                        <p>成功</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card bg-danger text-white">
+                                    <div class="card-body text-center">
+                                        <h4 id="failed-executed">-</h4>
+                                        <p>失敗</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card bg-info text-white">
+                                    <div class="card-body text-center">
+                                        <h4 id="success-rate">-</h4>
+                                        <p>成功率</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="execution-results">
+                            <!-- 実行結果がここに表示されます -->
                         </div>
                     </div>
                 </div>
@@ -286,64 +410,6 @@
             return card;
         }
 
-        // 詳細を表示
-        async function showDetail(requestId) {
-            try {
-                const response = await fetch(`/api/history/${requestId}`);
-                const detail = await response.json();
-                
-                const detailContent = document.getElementById('detail-content');
-                detailContent.innerHTML = `
-                    <div class="row mb-3">
-                        <div class="col-md-6">
-                            <h6>基本情報</h6>
-                            <table class="table table-sm">
-                                <tr><td>ID:</td><td>${detail.request_id}</td></tr>
-                                <tr><td>戦略:</td><td><span class="badge ${getStrategyColor(detail.strategy)}">${getStrategyDisplayName(detail.strategy)}</span></td></tr>
-                                <tr><td>生成数:</td><td>${detail.total_requests}件</td></tr>
-                            </table>
-                        </div>
-                        <div class="col-md-6">
-                            <h6>テンプレート</h6>
-                            <pre class="bg-light p-2 rounded"><code>${escapeHtml(detail.requests[0]?.request || 'N/A')}</code></pre>
-                        </div>
-                    </div>
-                    
-                    <h6>生成されたリクエスト (${detail.requests.length}件)</h6>
-                    <div class="table-responsive">
-                        <table class="table table-sm table-striped">
-                            <thead>
-                                <tr>
-                                    <th>#</th>
-                                    <th>リクエスト内容</th>
-                                    <th>プレースホルダ</th>
-                                    <th>ペイロード</th>
-                                    <th>位置</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${detail.requests.map((req, index) => `
-                                    <tr>
-                                        <td>${index + 1}</td>
-                                        <td><pre class="mb-0"><code>${escapeHtml(req.request)}</code></pre></td>
-                                        <td>${req.placeholder || '-'}</td>
-                                        <td>${req.payload || '-'}</td>
-                                        <td>${req.position || '-'}</td>
-                                    </tr>
-                                `).join('')}
-                            </tbody>
-                        </table>
-                    </div>
-                `;
-                
-                const modal = new bootstrap.Modal(document.getElementById('detailModal'));
-                modal.show();
-            } catch (error) {
-                console.error('詳細の取得に失敗しました:', error);
-                alert('詳細の取得に失敗しました。');
-            }
-        }
-
         // リクエストを削除
         async function deleteRequest(requestId) {
             if (!confirm(`リクエストID ${requestId} を削除しますか？`)) {
@@ -420,6 +486,393 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        // HTTPリクエスト実行関連の変数
+        let currentRequestId = null;
+
+        // HTTPリクエスト実行ボタンをクリック
+        function executeRequests() {
+            if (!currentRequestId) {
+                alert('リクエストIDが設定されていません。');
+                return;
+            }
+            
+            const executeModal = new bootstrap.Modal(document.getElementById('executeModal'));
+            executeModal.show();
+        }
+
+        // 実行を確認して開始
+        async function confirmExecute() {
+            // 個別実行モードかどうかをチェック
+            const isSingleExecution = window.singleExecutionMode;
+            
+            let requestId, position;
+            if (isSingleExecution) {
+                requestId = isSingleExecution.requestId;
+                position = isSingleExecution.position;
+            } else {
+                if (!currentRequestId) {
+                    alert('リクエストIDが設定されていません。');
+                    return;
+                }
+                requestId = currentRequestId;
+                position = null;
+            }
+
+            // 設定を取得
+            const scheme = document.getElementById('scheme').value;
+            const baseUrl = document.getElementById('base-url').value;
+            const timeout = parseInt(document.getElementById('timeout').value);
+            const followRedirects = document.getElementById('follow-redirects').checked;
+            const verifySsl = document.getElementById('verify-ssl').checked;
+            const additionalHeadersText = document.getElementById('additional-headers').value;
+
+            let additionalHeaders = null;
+            if (additionalHeadersText.trim()) {
+                try {
+                    additionalHeaders = JSON.parse(additionalHeadersText);
+                } catch (e) {
+                    alert('追加ヘッダーのJSON形式が正しくありません。');
+                    return;
+                }
+            }
+
+            // 実行設定モーダルを閉じる
+            const executeModal = bootstrap.Modal.getInstance(document.getElementById('executeModal'));
+            executeModal.hide();
+
+            // 実行開始
+            try {
+                const endpoint = isSingleExecution ? '/api/execute-single-request' : '/api/execute-requests';
+                const requestBody = isSingleExecution ? {
+                    request_id: requestId,
+                    position: position,
+                    http_config: {
+                        scheme: scheme,
+                        base_url: baseUrl,
+                        timeout: timeout,
+                        follow_redirects: followRedirects,
+                        verify_ssl: verifySsl,
+                        additional_headers: additionalHeaders
+                    }
+                } : {
+                    request_id: requestId,
+                    http_config: {
+                        scheme: scheme,
+                        base_url: baseUrl,
+                        timeout: timeout,
+                        follow_redirects: followRedirects,
+                        verify_ssl: verifySsl,
+                        additional_headers: additionalHeaders
+                    }
+                };
+
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || '実行に失敗しました。');
+                }
+
+                const result = await response.json();
+                
+                if (isSingleExecution) {
+                    showSingleExecutionResult(result);
+                } else {
+                    showExecutionResults(result);
+                }
+
+            } catch (error) {
+                console.error('実行に失敗しました:', error);
+                alert(`実行に失敗しました: ${error.message}`);
+            } finally {
+                // 個別実行モードをリセット
+                window.singleExecutionMode = null;
+            }
+        }
+
+        // 個別実行結果を表示
+        function showSingleExecutionResult(result) {
+            const httpResponse = result.http_response || {};
+            const isSuccess = !httpResponse.error;
+            const statusClass = isSuccess ? 'text-success' : 'text-danger';
+            const statusText = isSuccess ? 
+                `HTTP ${httpResponse.status_code || 'N/A'}` : 
+                'エラー';
+
+            // デバッグ情報をコンソールに出力
+            console.log('個別実行結果:', result);
+            console.log('HTTPレスポンス:', httpResponse);
+            console.log('レスポンスボディ:', httpResponse.body);
+            console.log('レスポンスボディの長さ:', httpResponse.body ? httpResponse.body.length : 0);
+
+            let responseContent = '';
+            if (httpResponse.error) {
+                responseContent = `<div class="alert alert-danger">${escapeHtml(httpResponse.error)}</div>`;
+            } else {
+                responseContent = `
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>レスポンスヘッダー</h6>
+                            <pre class="bg-light p-2 rounded"><code>${escapeHtml(JSON.stringify(httpResponse.headers, null, 2))}</code></pre>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>レスポンスボディ (長さ: ${httpResponse.body ? httpResponse.body.length : 0})</h6>
+                            <pre class="bg-light p-2 rounded" style="max-height: 300px; overflow-y: auto;"><code>${escapeHtml(httpResponse.body || '')}</code></pre>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // モーダルで表示
+            const modal = document.createElement('div');
+            modal.className = 'modal fade';
+            modal.innerHTML = `
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">個別リクエスト実行結果 #${result.position + 1}</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <h6>実行情報</h6>
+                                    <table class="table table-sm">
+                                        <tr><td>リクエストID:</td><td>${result.request_id}</td></tr>
+                                        <tr><td>位置:</td><td>${result.position + 1}</td></tr>
+                                        <tr><td>ステータス:</td><td class="${statusClass}">${statusText}</td></tr>
+                                        <tr><td>レスポンス時間:</td><td>${httpResponse.elapsed_time ? httpResponse.elapsed_time.toFixed(3) + 's' : 'N/A'}</td></tr>
+                                        <tr><td>URL:</td><td>${httpResponse.url || 'N/A'}</td></tr>
+                                    </table>
+                                </div>
+                                <div class="col-md-6">
+                                    <h6>リクエスト内容</h6>
+                                    <pre class="bg-light p-2 rounded"><code>${escapeHtml(result.request.request)}</code></pre>
+                                </div>
+                            </div>
+                            <h6>レスポンス詳細</h6>
+                            ${responseContent}
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+            const bootstrapModal = new bootstrap.Modal(modal);
+            bootstrapModal.show();
+            
+            // モーダルが閉じられたら要素を削除
+            modal.addEventListener('hidden.bs.modal', function() {
+                document.body.removeChild(modal);
+            });
+        }
+
+        // 実行結果を表示
+        function showExecutionResults(result) {
+            // デバッグ情報をコンソールに出力
+            console.log('全実行結果:', result);
+            window.lastExecutionResult = result; // 後で使用するために保存
+            
+            // 統計情報を更新
+            document.getElementById('total-executed').textContent = result.total_requests;
+            document.getElementById('successful-executed').textContent = result.successful_requests;
+            document.getElementById('failed-executed').textContent = result.failed_requests;
+            
+            const successRate = result.total_requests > 0 ? 
+                Math.round((result.successful_requests / result.total_requests) * 100) : 0;
+            document.getElementById('success-rate').textContent = `${successRate}%`;
+
+            // 結果詳細を表示
+            const resultsDiv = document.getElementById('execution-results');
+            resultsDiv.innerHTML = `
+                <h6>実行結果詳細</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm table-striped">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>ステータス</th>
+                                <th>レスポンス時間</th>
+                                <th>URL</th>
+                                <th>エラー</th>
+                                <th>レスポンス</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${result.results.map((req, index) => {
+                                const httpResponse = req.http_response || {};
+                                const isSuccess = !httpResponse.error;
+                                const statusClass = isSuccess ? 'text-success' : 'text-danger';
+                                const statusText = isSuccess ? 
+                                    `HTTP ${httpResponse.status_code || 'N/A'}` : 
+                                    'エラー';
+                                
+                                return `
+                                    <tr>
+                                        <td>${index + 1}</td>
+                                        <td class="${statusClass}">
+                                            <i class="fas fa-${isSuccess ? 'check' : 'times'}"></i>
+                                            ${statusText}
+                                        </td>
+                                        <td>${httpResponse.elapsed_time ? httpResponse.elapsed_time.toFixed(3) + 's' : 'N/A'}</td>
+                                        <td>${httpResponse.url || 'N/A'}</td>
+                                        <td>${httpResponse.error || '-'}</td>
+                                        <td>
+                                            <button class="btn btn-sm btn-outline-secondary" onclick="showResponse(${index})">
+                                                レスポンス表示
+                                            </button>
+                                        </td>
+                                    </tr>
+                                `;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+
+            // 結果モーダルを表示
+            const resultModal = new bootstrap.Modal(document.getElementById('resultModal'));
+            resultModal.show();
+        }
+
+        // レスポンス詳細を表示
+        function showResponse(index) {
+            const result = window.lastExecutionResult;
+            if (!result || !result.results[index]) {
+                alert('レスポンス情報が見つかりません。');
+                return;
+            }
+
+            const req = result.results[index];
+            const httpResponse = req.http_response || {};
+
+            let responseContent = '';
+            if (httpResponse.error) {
+                responseContent = `<div class="alert alert-danger">${escapeHtml(httpResponse.error)}</div>`;
+            } else {
+                responseContent = `
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>レスポンスヘッダー</h6>
+                            <pre class="bg-light p-2 rounded"><code>${escapeHtml(JSON.stringify(httpResponse.headers, null, 2))}</code></pre>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>レスポンスボディ</h6>
+                            <pre class="bg-light p-2 rounded" style="max-height: 300px; overflow-y: auto;"><code>${escapeHtml(httpResponse.body || '')}</code></pre>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // モーダルで表示
+            const modal = document.createElement('div');
+            modal.className = 'modal fade';
+            modal.innerHTML = `
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">レスポンス詳細 #${index + 1}</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            ${responseContent}
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+            const bootstrapModal = new bootstrap.Modal(modal);
+            bootstrapModal.show();
+            
+            // モーダルが閉じられたら要素を削除
+            modal.addEventListener('hidden.bs.modal', function() {
+                document.body.removeChild(modal);
+            });
+        }
+
+        // 個別リクエスト実行
+        async function executeSingleRequest(requestId, position) {
+            // 実行設定モーダルを表示
+            const executeModal = new bootstrap.Modal(document.getElementById('executeModal'));
+            executeModal.show();
+            
+            // 実行確認時に個別実行用のフラグを設定
+            window.singleExecutionMode = { requestId, position };
+        }
+
+        // 詳細表示時にリクエストIDを保存
+        async function showDetail(requestId) {
+            currentRequestId = requestId; // リクエストIDを保存
+            
+            try {
+                const response = await fetch(`/api/history/${requestId}`);
+                const detail = await response.json();
+                
+                const detailContent = document.getElementById('detail-content');
+                detailContent.innerHTML = `
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h6>基本情報</h6>
+                            <table class="table table-sm">
+                                <tr><td>ID:</td><td>${detail.request_id}</td></tr>
+                                <tr><td>戦略:</td><td><span class="badge ${getStrategyColor(detail.strategy)}">${getStrategyDisplayName(detail.strategy)}</span></td></tr>
+                                <tr><td>生成数:</td><td>${detail.total_requests}件</td></tr>
+                            </table>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>テンプレート</h6>
+                            <pre class="bg-light p-2 rounded"><code>${escapeHtml(detail.requests[0]?.request || 'N/A')}</code></pre>
+                        </div>
+                    </div>
+                    
+                    <h6>生成されたリクエスト (${detail.requests.length}件)</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>リクエスト内容</th>
+                                    <th>プレースホルダ</th>
+                                    <th>ペイロード</th>
+                                    <th>位置</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${detail.requests.map((req, index) => `
+                                    <tr>
+                                        <td>${index + 1}</td>
+                                        <td class="request-content-cell"><pre class="mb-0"><code>${escapeHtml(req.request)}</code></pre></td>
+                                        <td>${req.placeholder || '-'}</td>
+                                        <td>${req.payload || '-'}</td>
+                                        <td>${req.position || '-'}</td>
+                                        <td>
+                                            <button class="btn btn-sm btn-outline-success" onclick="executeSingleRequest(${detail.request_id}, ${index})">
+                                                <i class="fas fa-play"></i> 実行
+                                            </button>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+                
+                const modal = new bootstrap.Modal(document.getElementById('detailModal'));
+                modal.show();
+            } catch (error) {
+                console.error('詳細の取得に失敗しました:', error);
+                alert('詳細の取得に失敗しました。');
+            }
         }
     </script>
 </body>

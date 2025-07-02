@@ -28,6 +28,9 @@ from sqlalchemy.orm import Session
 # データベース関連のインポート
 from database import db_manager, FuzzerRequest, GeneratedRequest
 
+# HTTPリクエスト送信関連のインポート
+from http_client import RequestExecutor, HTTPRequestConfig
+
 app = FastAPI(
     title="プレースホルダ置換API",
     description="Burp Suite Intruderの4つの攻撃戦略を実装したAPI",
@@ -134,6 +137,81 @@ class StatisticsResponse(BaseModel):
     total_fuzzer_requests: int
     total_generated_requests: int
     strategy_distribution: Dict[str, int]
+
+class HTTPRequestConfigModel(BaseModel):
+    """
+    HTTPリクエスト設定の定義
+    
+    Attributes:
+        timeout (int): タイムアウト時間（秒）
+        follow_redirects (bool): リダイレクトを追跡するかどうか
+        verify_ssl (bool): SSL証明書を検証するかどうか
+        scheme (str): プロトコル（http または https）
+        base_url (str): ベースURL（スキームなし）
+        additional_headers (Dict[str, str]): 追加のヘッダー
+    """
+    timeout: int = 30
+    follow_redirects: bool = True
+    verify_ssl: bool = False
+    scheme: str = "http"
+    base_url: str = "localhost:8000"
+    additional_headers: Optional[Dict[str, str]] = None
+
+class ExecuteRequestModel(BaseModel):
+    """
+    リクエスト実行の定義
+    
+    Attributes:
+        request_id (int): 実行するリクエストのID
+        http_config (HTTPRequestConfigModel): HTTPリクエスト設定
+    """
+    request_id: int
+    http_config: Optional[HTTPRequestConfigModel] = None
+
+class ExecuteResponseModel(BaseModel):
+    """
+    リクエスト実行結果の定義
+    
+    Attributes:
+        request_id (int): 実行したリクエストのID
+        total_requests (int): 実行したリクエストの総数
+        successful_requests (int): 成功したリクエストの数
+        failed_requests (int): 失敗したリクエストの数
+        results (List[Dict[str, Any]]): 実行結果の詳細
+    """
+    request_id: int
+    total_requests: int
+    successful_requests: int
+    failed_requests: int
+    results: List[Dict[str, Any]]
+
+class ExecuteSingleRequestModel(BaseModel):
+    """
+    個別リクエスト実行の定義
+    
+    Attributes:
+        request_id (int): 実行するリクエストのID
+        position (int): 実行するリクエストの位置（インデックス）
+        http_config (HTTPRequestConfigModel): HTTPリクエスト設定
+    """
+    request_id: int
+    position: int
+    http_config: Optional[HTTPRequestConfigModel] = None
+
+class ExecuteSingleResponseModel(BaseModel):
+    """
+    個別リクエスト実行結果の定義
+    
+    Attributes:
+        request_id (int): 実行したリクエストのID
+        position (int): 実行したリクエストの位置
+        request (Dict[str, Any]): 実行したリクエストの内容
+        http_response (Dict[str, Any]): HTTPレスポンス
+    """
+    request_id: int
+    position: int
+    request: Dict[str, Any]
+    http_response: Optional[Dict[str, Any]] = None
 
 class FuzzerEngine:
     def __init__(self):
@@ -560,6 +638,142 @@ async def get_statistics(db: Session = Depends(get_db)):
     stats = db_manager.get_statistics(db)
     return StatisticsResponse(**stats)
 
+@app.post("/api/execute-requests", response_model=ExecuteResponseModel)
+async def execute_requests(request: ExecuteRequestModel, db: Session = Depends(get_db)):
+    """
+    生成されたリクエストを実際にHTTPリクエストとして送信するエンドポイント
+    
+    Args:
+        request (ExecuteRequestModel): 実行リクエスト
+        db (Session): データベースセッション
+        
+    Returns:
+        ExecuteResponseModel: 実行結果
+        
+    Raises:
+        HTTPException: リクエストが見つからない場合
+    """
+    # ファザーリクエストを取得
+    fuzzer_request = db_manager.get_fuzzer_request_by_id(db, request.request_id)
+    if not fuzzer_request:
+        raise HTTPException(status_code=404, detail="リクエストが見つかりません")
+    
+    # 生成されたリクエストを取得
+    generated_requests = []
+    for gen_req in fuzzer_request.generated_requests:
+        req_dict = {
+            "request": gen_req.request_content,
+            "placeholder": gen_req.placeholder,
+            "payload": gen_req.payload,
+            "position": gen_req.position
+        }
+        
+        # applied_toフィールドがある場合は追加
+        if gen_req.applied_to:
+            req_dict["applied_to"] = gen_req.get_applied_to()
+        
+        generated_requests.append(req_dict)
+    
+    # HTTP設定を準備
+    http_config = None
+    if request.http_config:
+        http_config = HTTPRequestConfig(
+            timeout=request.http_config.timeout,
+            follow_redirects=request.http_config.follow_redirects,
+            verify_ssl=request.http_config.verify_ssl,
+            scheme=request.http_config.scheme,
+            base_url=request.http_config.base_url,
+            headers=request.http_config.additional_headers
+        )
+    
+    try:
+        # リクエストを実行
+        results = await RequestExecutor.execute_requests(generated_requests, http_config)
+        
+        # 成功・失敗の数をカウント
+        successful_requests = sum(1 for r in results if r.get("http_response", {}).get("error") is None)
+        failed_requests = len(results) - successful_requests
+        
+        return ExecuteResponseModel(
+            request_id=request.request_id,
+            total_requests=len(results),
+            successful_requests=successful_requests,
+            failed_requests=failed_requests,
+            results=results
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"リクエスト実行エラー: {str(e)}")
+
+@app.post("/api/execute-single-request", response_model=ExecuteSingleResponseModel)
+async def execute_single_request(request: ExecuteSingleRequestModel, db: Session = Depends(get_db)):
+    """
+    個別のリクエストを実行するエンドポイント
+    
+    Args:
+        request (ExecuteSingleRequestModel): 個別実行リクエスト
+        db (Session): データベースセッション
+        
+    Returns:
+        ExecuteSingleResponseModel: 実行結果
+        
+    Raises:
+        HTTPException: リクエストが見つからない場合、または位置が無効な場合
+    """
+    # ファザーリクエストを取得
+    fuzzer_request = db_manager.get_fuzzer_request_by_id(db, request.request_id)
+    if not fuzzer_request:
+        raise HTTPException(status_code=404, detail="リクエストが見つかりません")
+    
+    # 生成されたリクエストを取得
+    generated_requests = []
+    for gen_req in fuzzer_request.generated_requests:
+        req_dict = {
+            "request": gen_req.request_content,
+            "placeholder": gen_req.placeholder,
+            "payload": gen_req.payload,
+            "position": gen_req.position
+        }
+        
+        # applied_toフィールドがある場合は追加
+        if gen_req.applied_to:
+            req_dict["applied_to"] = gen_req.get_applied_to()
+        
+        generated_requests.append(req_dict)
+    
+    # 位置の妥当性をチェック
+    if request.position < 0 or request.position >= len(generated_requests):
+        raise HTTPException(status_code=400, detail="無効なリクエスト位置です")
+    
+    # 指定された位置のリクエストのみを取得
+    single_request = generated_requests[request.position]
+    
+    # HTTP設定を準備
+    http_config = None
+    if request.http_config:
+        http_config = HTTPRequestConfig(
+            timeout=request.http_config.timeout,
+            follow_redirects=request.http_config.follow_redirects,
+            verify_ssl=request.http_config.verify_ssl,
+            scheme=request.http_config.scheme,
+            base_url=request.http_config.base_url,
+            headers=request.http_config.additional_headers
+        )
+    
+    try:
+        # 単一リクエストを実行
+        results = await RequestExecutor.execute_requests([single_request], http_config)
+        
+        return ExecuteSingleResponseModel(
+            request_id=request.request_id,
+            position=request.position,
+            request=single_request,
+            http_response=results[0].get("http_response") if results else None
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"リクエスト実行エラー: {str(e)}")
+
 @app.get("/test", response_class=HTMLResponse)
 async def test_page():
     """
@@ -575,6 +789,26 @@ async def test_page():
             return HTMLResponse(content=f.read())
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="テストページが見つかりません")
+
+@app.get("/api/test-response")
+async def test_response():
+    """
+    テスト用レスポンスエンドポイント
+    
+    個別リクエスト実行のテスト用に使用します。
+    
+    Returns:
+        Dict[str, Any]: テストレスポンス
+    """
+    return {
+        "message": "テストレスポンスです",
+        "timestamp": "2024-01-01T00:00:00Z",
+        "data": {
+            "id": 123,
+            "name": "テストデータ",
+            "status": "success"
+        }
+    }
 
 @app.get("/history-page", response_class=HTMLResponse)
 async def history_page():

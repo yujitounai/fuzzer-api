@@ -78,7 +78,7 @@
             </div>
             <div class="mb-3">
               <label for="template" class="form-label">テンプレート</label>
-              <textarea id="template" placeholder="例: SELECT * FROM users WHERE id=<<id>> AND name=<<name>>"></textarea>
+              <textarea id="template" placeholder="例: GET /api/users?id=<<>> HTTP/1.1"></textarea>
             </div>
             <div class="mb-3">
               <label for="placeholders" class="form-label">プレースホルダ（カンマ区切り）</label>
@@ -185,7 +185,7 @@
 
     function loadSniperExample() {
       document.getElementById('strategy').value = 'sniper';
-      templateCodeMirror.setValue('GET /hack/normalxss.php?cmd=<<>> HTTP/1.1\nHost: localhost<<>>\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\nAccept-Encoding: gzip, deflate, br, zstd\nAccept-Language: ja,en-US;q=0.9,en;q=0.8');
+      templateCodeMirror.setValue('GET /hack/normalxss.php?cmd=<<>> HTTP/1.1\nHost: bogus.jp\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\nAccept-Encoding: gzip, deflate, br, zstd\nAccept-Language: ja,en-US;q=0.9,en;q=0.8');
       document.getElementById('placeholders').value = 'cmd,host';
       
       const payloadSets = document.getElementById('payload-sets');
@@ -393,7 +393,7 @@ admin123`);
         lineWrapping: true,
         indentUnit: 2,
         tabSize: 2,
-        placeholder: '例: SELECT * FROM users WHERE id=<<id>> AND name=<<name>>'
+        placeholder: '例: GET /api/users?id=<<>> HTTP/1.1'
       });
       
       // CodeMirrorの初期化後に例を読み込み

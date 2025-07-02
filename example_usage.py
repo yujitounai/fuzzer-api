@@ -9,8 +9,8 @@ def test_sniper_attack():
     print("=== Sniper Attack テスト ===")
     
     payload = {
-        "template": "SELECT * FROM users WHERE id=<<id>> AND name=<<name>>",
-        "placeholders": ["id", "name"],
+        "template": "GET /hack/normalxss.php?cmd=<<>> HTTP/1.1\nHost: bogus.jp\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\nAccept-Encoding: gzip, deflate, br, zstd\nAccept-Language: ja,en-US;q=0.9,en;q=0.8",
+        "placeholders": ["cmd", "host"],
         "strategy": "sniper",
         "payload_sets": [
             {

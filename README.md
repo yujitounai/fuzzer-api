@@ -50,6 +50,13 @@
 pip install -r requirements.txt
 ```
 
+**主要な依存関係:**
+- `fastapi`: Webフレームワーク
+- `uvicorn`: ASGIサーバー
+- `sqlalchemy`: データベースORM
+- `aiohttp`: HTTPリクエスト送信（非同期）
+- `pydantic`: データバリデーション
+
 2. サーバーを起動:
 ```bash
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
@@ -67,7 +74,11 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 #### 履歴ページ
 - **URL**: `http://localhost:8000/history-page`
-- **機能**: リクエスト履歴の表示・管理・統計情報
+- **機能**: 
+  - リクエスト履歴の表示・管理・統計情報
+  - HTTPリクエスト実行機能（設定可能なタイムアウト、リダイレクト追跡、SSL検証、追加ヘッダー）
+  - 実行結果の詳細表示（ステータスコード、レスポンス時間、エラー情報）
+  - レスポンス内容の表示（ヘッダー、ボディ）
 
 ### API エンドポイント
 
@@ -77,8 +88,8 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 **リクエスト例:**
 ```json
 {
-  "template": "SELECT * FROM users WHERE id=<<id>> AND name=<<name>>",
-  "placeholders": ["id", "name"],
+  "template": "GET /hack/normalxss.php?cmd=<<>> HTTP/1.1\nHost: bogus.jp\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\nAccept-Encoding: gzip, deflate, br, zstd\nAccept-Language: ja,en-US;q=0.9,en;q=0.8",
+  "placeholders": ["cmd", "host"],
   "strategy": "sniper",
   "payload_sets": [
     {
@@ -93,20 +104,33 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```json
 {
   "strategy": "sniper",
-  "total_requests": 6,
+  "total_requests": 4,
   "requests": [
     {
-      "request": "SELECT * FROM users WHERE id=1 AND name=",
-      "placeholder": "id",
-      "payload": "1"
+      "request": "GET /hack/normalxss.php?cmd= HTTP/1.1\nHost: bogus.jp\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\nAccept-Encoding: gzip, deflate, br, zstd\nAccept-Language: ja,en-US;q=0.9,en;q=0.8",
+      "placeholder": "original",
+      "payload": "",
+      "position": 0
     },
     {
-      "request": "SELECT * FROM users WHERE id=1' OR '1'='1 AND name=",
-      "placeholder": "id",
-      "payload": "1' OR '1'='1"
+      "request": "GET /hack/normalxss.php?cmd=1 HTTP/1.1\nHost: bogus.jp\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\nAccept-Encoding: gzip, deflate, br, zstd\nAccept-Language: ja,en-US;q=0.9,en;q=0.8",
+      "placeholder": "<<>>",
+      "payload": "1",
+      "position": 1
+    },
+    {
+      "request": "GET /hack/normalxss.php?cmd=1' OR '1'='1 HTTP/1.1\nHost: bogus.jp\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\nAccept-Encoding: gzip, deflate, br, zstd\nAccept-Language: ja,en-US;q=0.9,en;q=0.8",
+      "placeholder": "<<>>",
+      "payload": "1' OR '1'='1",
+      "position": 2
+    },
+    {
+      "request": "GET /hack/normalxss.php?cmd=1; DROP TABLE users; -- HTTP/1.1\nHost: bogus.jp\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\nAccept-Encoding: gzip, deflate, br, zstd\nAccept-Language: ja,en-US;q=0.9,en;q=0.8",
+      "placeholder": "<<>>",
+      "payload": "1; DROP TABLE users; --",
+      "position": 3
     }
-  ],
-  "request_id": 1
+  ]
 }
 ```
 
@@ -137,6 +161,63 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     "pitchfork": 2,
     "cluster_bomb": 1
   }
+}
+```
+
+#### POST /execute-requests
+生成されたリクエストを実際にHTTPリクエストとして送信します。
+
+**設定可能なパラメータ:**
+- `scheme`: プロトコル（http または https）
+- `base_url`: ベースURL（スキームなし、例: localhost:8000, example.com:443）
+- `timeout`: タイムアウト時間（秒）
+- `follow_redirects`: リダイレクトを追跡するかどうか
+- `verify_ssl`: SSL証明書を検証するかどうか
+- `additional_headers`: 追加のHTTPヘッダー
+
+**リクエスト例:**
+```json
+{
+  "request_id": 1,
+  "http_config": {
+    "scheme": "https",
+    "base_url": "example.com:443",
+    "timeout": 30,
+    "follow_redirects": true,
+    "verify_ssl": false,
+    "additional_headers": {
+      "User-Agent": "Custom-Agent/1.0"
+    }
+  }
+}
+```
+
+**レスポンス例:**
+```json
+{
+  "request_id": 1,
+  "total_requests": 5,
+  "successful_requests": 4,
+  "failed_requests": 1,
+  "results": [
+    {
+      "request": "GET /api/test HTTP/1.1\nHost: localhost:8000\n\n",
+      "placeholder": "original",
+      "payload": "",
+      "position": 0,
+      "http_response": {
+        "status_code": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Content-Length": "123"
+        },
+        "body": "{\"message\": \"success\"}",
+        "url": "http://localhost:8000/api/test",
+        "elapsed_time": 0.023,
+        "error": null
+      }
+    }
+  ]
 }
 ```
 
