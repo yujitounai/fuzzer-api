@@ -274,7 +274,7 @@
 
     function loadPostFormExample() {
       document.getElementById('strategy').value = 'sniper';
-      templateCodeMirror.setValue(`POST /api/login HTTP/1.1
+      const templateValue = `POST /api/login HTTP/1.1
 Host: example.com
 Content-Type: application/x-www-form-urlencoded
 User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
@@ -284,13 +284,19 @@ Accept-Encoding: gzip, deflate, br
 Connection: keep-alive
 Content-Length: <<>>
 
-username=<<>>&password=<<>>&submit=Login`);
+username=<<>>&password=<<>>&submit=Login`;
+      
+      if (templateCodeMirror) {
+        templateCodeMirror.setValue(templateValue);
+      } else {
+        document.getElementById('template').value = templateValue;
+      }
       document.getElementById('placeholders').value = 'content_length,username,password';
     }
 
     function loadPostJsonExample() {
       document.getElementById('strategy').value = 'sniper';
-      templateCodeMirror.setValue(`POST /api/users HTTP/1.1
+      const templateValue = `POST /api/users HTTP/1.1
 Host: api.example.com
 Content-Type: application/json
 User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
@@ -298,13 +304,19 @@ Accept: application/json
 Authorization: Bearer <<>>
 Content-Length: <<>>
 
-{"username": "<<>>", "email": "<<>>", "role": "user"}`);
+{"username": "<<>>", "email": "<<>>", "role": "user"}`;
+      
+      if (templateCodeMirror) {
+        templateCodeMirror.setValue(templateValue);
+      } else {
+        document.getElementById('template').value = templateValue;
+      }
       document.getElementById('placeholders').value = 'auth_token,content_length,username,email';
     }
 
     function loadPostMultipartExample() {
       document.getElementById('strategy').value = 'sniper';
-      templateCodeMirror.setValue(`POST /api/upload HTTP/1.1
+      const templateValue = `POST /api/upload HTTP/1.1
 Host: upload.example.com
 Content-Type: multipart/form-data; boundary=----WebKitFormBoundary<<>>
 User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
@@ -320,7 +332,13 @@ Content-Type: application/octet-stream
 Content-Disposition: form-data; name="description"
 
 <<>>
-------WebKitFormBoundary<<>>--`);
+------WebKitFormBoundary<<>>--`;
+      
+      if (templateCodeMirror) {
+        templateCodeMirror.setValue(templateValue);
+      } else {
+        document.getElementById('template').value = templateValue;
+      }
       document.getElementById('placeholders').value = 'boundary1,content_length,boundary2,filename,file_content,boundary3,description,boundary4';
     }
 
@@ -329,10 +347,16 @@ Content-Disposition: form-data; name="description"
       document.getElementById('strategy').value = 'mutation';
       
       // テンプレートを設定
-      templateCodeMirror.setValue(`GET /api/test?param=<<X>> HTTP/1.1
+      const templateValue = `GET /api/test?param=<<X>> HTTP/1.1
 Host: example.com
 User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
-Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`);
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
+      
+      if (templateCodeMirror) {
+        templateCodeMirror.setValue(templateValue);
+      } else {
+        document.getElementById('template').value = templateValue;
+      }
       
       // プレースホルダを設定
       document.getElementById('placeholders').value = 'X';
@@ -595,8 +619,7 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`);
 
     // 初期化処理
     document.addEventListener('DOMContentLoaded', function() {
-      // CodeMirrorの初期化（一時的に無効化）
-      /*
+      // CodeMirrorの初期化
       templateCodeMirror = CodeMirror.fromTextArea(document.getElementById('template'), {
         mode: 'text/plain',
         theme: 'monokai',
@@ -624,7 +647,6 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`);
           }
         }
       });
-      */
 
       // デフォルトのSniperサンプルを読み込み
       loadSampleJson();
