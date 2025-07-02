@@ -418,6 +418,74 @@ Content-Disposition: form-data; name="metadata"
         print(f"  {first_request['request'][:400]}...")
     print()
 
+def test_mutation_attack():
+    """変異ベース攻撃のテスト"""
+    print("=== Mutation Attack テスト ===")
+    
+    payload = {
+        "template": "GET /api/test?param=<<X>> HTTP/1.1\nHost: example.com\nUser-Agent: TestClient/1.0",
+        "mutations": [
+            {
+                "token": "<<X>>",
+                "strategy": "dictionary",
+                "values": [
+                    "<script>",
+                    "' OR 1=1 --",
+                    {
+                        "value": "A",
+                        "repeat": 100
+                    },
+                    {
+                        "value": "ABC",
+                        "repeat": 50
+                    }
+                ]
+            }
+        ]
+    }
+    
+    response = requests.post("http://localhost:8000/api/mutations", json=payload)
+    print(f"ステータスコード: {response.status_code}")
+    print(f"レスポンス: {json.dumps(response.json(), indent=2, ensure_ascii=False)}")
+    print()
+
+def test_mutation_with_multiple_tokens():
+    """複数トークンを使用した変異攻撃のテスト"""
+    print("=== Mutation Attack (複数トークン) テスト ===")
+    
+    payload = {
+        "template": "GET /api/test?param1=<<X>>&param2=<<Y>> HTTP/1.1\nHost: example.com",
+        "mutations": [
+            {
+                "token": "<<X>>",
+                "strategy": "dictionary",
+                "values": [
+                    "test1",
+                    {
+                        "value": "A",
+                        "repeat": 10
+                    }
+                ]
+            },
+            {
+                "token": "<<Y>>",
+                "strategy": "dictionary",
+                "values": [
+                    "test2",
+                    {
+                        "value": "B",
+                        "repeat": 5
+                    }
+                ]
+            }
+        ]
+    }
+    
+    response = requests.post("http://localhost:8000/api/mutations", json=payload)
+    print(f"ステータスコード: {response.status_code}")
+    print(f"レスポンス: {json.dumps(response.json(), indent=2, ensure_ascii=False)}")
+    print()
+
 if __name__ == "__main__":
     test_sniper_with_multiple_placeholders()
     test_sniper_single_placeholder()
@@ -428,4 +496,6 @@ if __name__ == "__main__":
     test_single_http_execution_api()
     test_post_request_examples()
     test_post_with_json_body()
-    test_post_with_multipart_file() 
+    test_post_with_multipart_file()
+    test_mutation_attack()
+    test_mutation_with_multiple_tokens() 

@@ -78,7 +78,7 @@
             </div>
             <div class="mb-3">
               <label for="template" class="form-label">テンプレート</label>
-              <textarea id="template" placeholder="例: GET /api/users?id=<<>> HTTP/1.1"></textarea>
+              <textarea id="template" class="form-control" rows="8" placeholder="例: GET /api/users?id=<<>> HTTP/1.1"></textarea>
             </div>
             <div class="mb-3">
               <label for="placeholders" class="form-label">プレースホルダ（カンマ区切り）</label>
@@ -94,21 +94,56 @@
                 <button type="button" class="btn btn-outline-secondary btn-sm" onclick="loadPostFormExample()">POST Form</button>
                 <button type="button" class="btn btn-outline-secondary btn-sm" onclick="loadPostJsonExample()">POST JSON</button>
                 <button type="button" class="btn btn-outline-secondary btn-sm" onclick="loadPostMultipartExample()">POST Multipart</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="loadMutationExample()">Mutation</button>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- Payload Sets -->
+        <!-- JSON入力セクション -->
         <div class="card">
           <div class="card-header">
-            <i class="bi bi-list-ul"></i> ペイロードセット
-            <button class="btn btn-sm btn-primary float-end" onclick="addPayloadSet()">
-              <i class="bi bi-plus"></i> 追加
-            </button>
+            <i class="bi bi-file-code"></i> JSON入力（Mutations形式）
           </div>
           <div class="card-body">
-            <div id="payload-sets"></div>
+            <div class="mb-3">
+              <label class="form-label">
+                <i class="bi bi-file-code"></i> JSONから読み込み（Mutations形式）
+              </label>
+              <div class="input-group">
+                <textarea id="json-input" class="form-control" rows="6" placeholder='{
+  "mutations": [
+    {
+      "token": "<<X>>",
+      "strategy": "dictionary",
+      "values": [
+        "&lt;script&gt;",
+        "\' OR 1=1 --",
+        {
+          "value": "ABC",
+          "repeat": 3000
+        }
+      ]
+    }
+  ],
+  "combo": "Sniper"
+}'></textarea>
+                <button class="btn btn-outline-primary" type="button" onclick="loadFromJson()">
+                  <i class="bi bi-arrow-down-circle"></i> 読み込み
+                </button>
+              </div>
+              <div class="mt-2">
+                <button class="btn btn-sm btn-outline-secondary" onclick="loadSampleJson()">
+                  <i class="bi bi-file-earmark-text"></i> Sniperサンプル
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="loadBatteringRamSampleJson()">
+                  <i class="bi bi-file-earmark-text"></i> Battering Ramサンプル
+                </button>
+              </div>
+              <div class="form-text">
+                Mutations形式のJSONを入力してペイロードを指定できます
+              </div>
+            </div>
           </div>
         </div>
 
@@ -148,122 +183,93 @@
   <script>
     let codeMirrors = [];
     let templateCodeMirror = null;
+    let jsonCodeMirror = null;
 
-    function createPayloadSet(name = '', payloads = '') {
-      const payloadSetId = 'payload-set-' + Date.now();
-      const html = `
-        <div class="card payload-set-card mb-3" id="${payloadSetId}">
-          <div class="card-header">
-            <div class="row align-items-center">
-              <div class="col">
-                <input type="text" class="form-control form-control-sm" placeholder="ペイロードセット名" value="${name}">
-              </div>
-              <div class="col-auto">
-                <button class="btn btn-sm btn-outline-danger" onclick="removePayloadSet('${payloadSetId}')">
-                  <i class="bi bi-trash"></i>
-                </button>
-              </div>
-            </div>
-          </div>
-          <div class="card-body">
-            <textarea class="payload-textarea" placeholder="ペイロード（改行区切り）">${payloads}</textarea>
-          </div>
-        </div>
-      `;
+    function loadFromJson() {
+      const jsonInput = jsonCodeMirror ? jsonCodeMirror.getValue().trim() : document.getElementById('json-input').value.trim();
       
-      const container = document.getElementById('payload-sets');
-      container.insertAdjacentHTML('beforeend', html);
+      if (!jsonInput) {
+        alert('JSONを入力してください');
+        return;
+      }
       
-      const textarea = container.querySelector(`#${payloadSetId} .payload-textarea`);
-      const cm = CodeMirror.fromTextArea(textarea, {
-        mode: 'text/plain',
-        theme: 'monokai',
-        lineNumbers: true,
-        lineWrapping: true,
-        indentUnit: 2,
-        tabSize: 2
-      });
-      codeMirrors.push(cm);
-    }
-
-    function removePayloadSet(id) {
-      const element = document.getElementById(id);
-      if (element) element.remove();
-    }
-
-    function addPayloadSet() {
-      createPayloadSet();
+      try {
+        const data = JSON.parse(jsonInput);
+        
+        // 戦略を設定（comboフィールドがある場合）
+        if (data.combo) {
+          const strategyMap = {
+            'Sniper': 'sniper',
+            'Battering Ram': 'battering_ram',
+            'Pitchfork': 'pitchfork',
+            'Cluster Bomb': 'cluster_bomb'
+          };
+          const strategy = strategyMap[data.combo] || 'sniper';
+          document.getElementById('strategy').value = strategy;
+        }
+        
+        // mutationsを処理してプレースホルダを設定
+        if (data.mutations && Array.isArray(data.mutations)) {
+          const placeholders = [];
+          data.mutations.forEach((mutation) => {
+            if (mutation.token) {
+              // トークンをそのままプレースホルダとして使用（<<username>> -> <<username>>）
+              if (!placeholders.includes(mutation.token)) {
+                placeholders.push(mutation.token);
+              }
+            }
+          });
+          
+          // プレースホルダフィールドを更新
+          document.getElementById('placeholders').value = placeholders.join(', ');
+        }
+        
+        // 成功メッセージ
+        alert('JSONから設定を読み込みました！');
+        
+      } catch (error) {
+        alert('JSONの解析に失敗しました: ' + error.message);
+      }
     }
 
     function loadSniperExample() {
       document.getElementById('strategy').value = 'sniper';
-      templateCodeMirror.setValue('GET /hack/normalxss.php?cmd=<<>> HTTP/1.1\nHost: bogus.jp\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\nAccept-Encoding: gzip, deflate, br, zstd\nAccept-Language: ja,en-US;q=0.9,en;q=0.8');
+      if (templateCodeMirror) {
+        templateCodeMirror.setValue('GET /hack/normalxss.php?cmd=<<>> HTTP/1.1\nHost: bogus.jp\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\nAccept-Encoding: gzip, deflate, br, zstd\nAccept-Language: ja,en-US;q=0.9,en;q=0.8');
+      } else {
+        document.getElementById('template').value = 'GET /hack/normalxss.php?cmd=<<>> HTTP/1.1\nHost: bogus.jp\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\nAccept-Encoding: gzip, deflate, br, zstd\nAccept-Language: ja,en-US;q=0.9,en;q=0.8';
+      }
       document.getElementById('placeholders').value = 'cmd,host';
-      
-      const payloadSets = document.getElementById('payload-sets');
-      payloadSets.innerHTML = '';
-      codeMirrors = [];
-      
-      createPayloadSet('sql_injection', '1\n1\' OR \'1\'=\'1\n1; DROP TABLE users; --\n1\' UNION SELECT * FROM users --');
     }
 
     function loadBatteringRamExample() {
       document.getElementById('strategy').value = 'battering_ram';
-      templateCodeMirror.setValue('username=<<username>>&password=<<password>>&email=<<email>>');
+      if (templateCodeMirror) {
+        templateCodeMirror.setValue('username=<<username>>&password=<<password>>&email=<<email>>');
+      } else {
+        document.getElementById('template').value = 'username=<<username>>&password=<<password>>&email=<<email>>';
+      }
       document.getElementById('placeholders').value = 'username,password,email';
-      
-      const payloadSets = document.getElementById('payload-sets');
-      payloadSets.innerHTML = '';
-      codeMirrors = [];
-      
-      createPayloadSet('common_credentials', `admin
-test
-guest
-root`);
     }
 
     function loadPitchforkExample() {
       document.getElementById('strategy').value = 'pitchfork';
-      templateCodeMirror.setValue('username=<<username>>&user_id=<<user_id>>&role=<<role>>');
+      if (templateCodeMirror) {
+        templateCodeMirror.setValue('username=<<username>>&user_id=<<user_id>>&role=<<role>>');
+      } else {
+        document.getElementById('template').value = 'username=<<username>>&user_id=<<user_id>>&role=<<role>>';
+      }
       document.getElementById('placeholders').value = 'username,user_id,role';
-      
-      const payloadSets = document.getElementById('payload-sets');
-      payloadSets.innerHTML = '';
-      codeMirrors = [];
-      
-      createPayloadSet('usernames', `admin
-user1
-test
-john`);
-      
-      createPayloadSet('user_ids', `1
-2
-3
-4`);
-      
-      createPayloadSet('roles', `admin
-user
-guest
-moderator`);
     }
 
     function loadClusterBombExample() {
       document.getElementById('strategy').value = 'cluster_bomb';
-      templateCodeMirror.setValue('username=<<username>>&password=<<password>>');
+      if (templateCodeMirror) {
+        templateCodeMirror.setValue('username=<<username>>&password=<<password>>');
+      } else {
+        document.getElementById('template').value = 'username=<<username>>&password=<<password>>';
+      }
       document.getElementById('placeholders').value = 'username,password';
-      
-      const payloadSets = document.getElementById('payload-sets');
-      payloadSets.innerHTML = '';
-      codeMirrors = [];
-      
-      createPayloadSet('usernames', `admin
-user1
-test`);
-      
-      createPayloadSet('passwords', `password123
-123456
-qwerty
-admin123`);
     }
 
     function loadPostFormExample() {
@@ -280,14 +286,6 @@ Content-Length: <<>>
 
 username=<<>>&password=<<>>&submit=Login`);
       document.getElementById('placeholders').value = 'content_length,username,password';
-      
-      const payloadSets = document.getElementById('payload-sets');
-      payloadSets.innerHTML = '';
-      codeMirrors = [];
-      
-      createPayloadSet('login_credentials', `admin
-user123
-testuser`);
     }
 
     function loadPostJsonExample() {
@@ -302,14 +300,6 @@ Content-Length: <<>>
 
 {"username": "<<>>", "email": "<<>>", "role": "user"}`);
       document.getElementById('placeholders').value = 'auth_token,content_length,username,email';
-      
-      const payloadSets = document.getElementById('payload-sets');
-      payloadSets.innerHTML = '';
-      codeMirrors = [];
-      
-      createPayloadSet('user_data', `john_doe
-jane_smith
-admin_user`);
     }
 
     function loadPostMultipartExample() {
@@ -332,36 +322,162 @@ Content-Disposition: form-data; name="description"
 <<>>
 ------WebKitFormBoundary<<>>--`);
       document.getElementById('placeholders').value = 'boundary1,content_length,boundary2,filename,file_content,boundary3,description,boundary4';
+    }
+
+    function loadMutationExample() {
+      // 戦略をmutationに設定
+      document.getElementById('strategy').value = 'mutation';
       
+      // テンプレートを設定
+      templateCodeMirror.setValue(`GET /api/test?param=<<X>> HTTP/1.1
+Host: example.com
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`);
+      
+      // プレースホルダを設定
+      document.getElementById('placeholders').value = 'X';
+      
+      // ペイロードセットをクリア
       const payloadSets = document.getElementById('payload-sets');
       payloadSets.innerHTML = '';
       codeMirrors = [];
       
-      createPayloadSet('file_upload', `test.txt
-document.pdf
-image.jpg`);
+      // 変異の例を設定（実際のAPIでは別のエンドポイントを使用）
+      alert('Mutation機能の例:\n\n' +
+            '{\n' +
+            '  "template": "GET /api/test?param=<<X>> HTTP/1.1\\nHost: example.com",\n' +
+            '  "mutations": [\n' +
+            '    {\n' +
+            '      "token": "<<X>>",\n' +
+            '      "strategy": "dictionary",\n' +
+            '      "values": [\n' +
+            '        "<script>alert(\\"XSS\\")<\/script>",\n' +
+            '        "\' OR 1=1 --",\n' +
+            '        {\n' +
+            '          "value": "A",\n' +
+            '          "repeat": 1000\n' +
+            '        }\n' +
+            '      ]\n' +
+            '    }\n' +
+            '  ]\n' +
+            '}\n\n' +
+            'この機能は /api/mutations エンドポイントで利用できます。');
+    }
+
+    function loadSampleJson() {
+      const sampleJson = [
+        '{',
+        '  "mutations": [',
+        '    {',
+        '      "token": "<<X>>",',
+        '      "strategy": "dictionary",',
+        '      "values": [',
+        '        "<script>alert(\\"XSS\\")<\/script>",',
+        '        "\' OR 1=1 --",',
+        '        { "value": "A", "repeat": 3000 }',
+        '      ]',
+        '    }',
+        '  ],',
+        '  "combo": "Sniper"',
+        '}'
+      ].join('\n');
+      if (jsonCodeMirror) {
+        jsonCodeMirror.setValue(sampleJson);
+      } else {
+        document.getElementById('json-input').value = sampleJson;
+      }
+    }
+
+    function loadBatteringRamSampleJson() {
+      const sampleJson = [
+        '{',
+        '  "mutations": [',
+        '    {',
+        '      "token": "<<username>>",',
+        '      "strategy": "dictionary",',
+        '      "values": [',
+        '        "admin",',
+        '        "test",',
+        '        "guest",',
+        '        "root"',
+        '      ]',
+        '    },',
+        '    {',
+        '      "token": "<<password>>",',
+        '      "strategy": "dictionary",',
+        '      "values": [',
+        '        "admin",',
+        '        "test",',
+        '        "guest",',
+        '        "root"',
+        '      ]',
+        '    },',
+        '    {',
+        '      "token": "<<email>>",',
+        '      "strategy": "dictionary",',
+        '      "values": [',
+        '        "admin@example.com",',
+        '        "test@example.com",',
+        '        "guest@example.com",',
+        '        "root@example.com"',
+        '      ]',
+        '    }',
+        '  ],',
+        '  "combo": "Battering Ram"',
+        '}'
+      ].join('\n');
+      if (jsonCodeMirror) {
+        jsonCodeMirror.setValue(sampleJson);
+      } else {
+        document.getElementById('json-input').value = sampleJson;
+      }
     }
 
     async function sendRequest() {
       const strategy = document.getElementById('strategy').value;
-      const template = templateCodeMirror.getValue();
+      const template = templateCodeMirror ? templateCodeMirror.getValue() : document.getElementById('template').value;
       const placeholders = document.getElementById('placeholders').value.split(',').map(s => s.trim()).filter(Boolean);
       
-      const payloadSets = [];
-      const payloadSetCards = document.querySelectorAll('.payload-set-card');
+      // JSON入力からmutationsデータを取得
+      const jsonInput = jsonCodeMirror ? jsonCodeMirror.getValue().trim() : document.getElementById('json-input').value.trim();
       
-      payloadSetCards.forEach(card => {
-        const name = card.querySelector('input').value;
-        const cm = card.querySelector('.CodeMirror');
-        const payloads = cm ? cm.CodeMirror.getValue().split('\n').filter(p => p.trim()) : [];
+      if (!jsonInput) {
+        alert('JSONを入力してください');
+        return;
+      }
+      
+      let payloadSets = [];
+      
+      try {
+        const data = JSON.parse(jsonInput);
         
-        if (name && payloads.length > 0) {
-          payloadSets.push({
-            name: name,
-            payloads: payloads
+        // mutationsデータをペイロードセット形式に変換
+        if (data.mutations && Array.isArray(data.mutations)) {
+          data.mutations.forEach((mutation) => {
+            if (mutation.token && mutation.values && Array.isArray(mutation.values)) {
+              const payloads = mutation.values.map(value => {
+                if (typeof value === 'string') {
+                  return value;
+                } else if (typeof value === 'object' && value.value && value.repeat) {
+                  // repeat機能の場合は実際の値を展開
+                  return value.value.repeat(value.repeat);
+                }
+                return JSON.stringify(value);
+              }).filter(p => p.trim());
+              
+              if (payloads.length > 0) {
+                payloadSets.push({
+                  name: mutation.token,
+                  payloads: payloads
+                });
+              }
+            }
           });
         }
-      });
+      } catch (error) {
+        alert('JSONの解析に失敗しました: ' + error.message);
+        return;
+      }
 
       const body = { template, placeholders, strategy, payload_sets: payloadSets };
 
@@ -380,72 +496,87 @@ image.jpg`);
       `;
 
       try {
-        const res = await fetch('/api/replace-placeholders', {
+        // 新しい直感的なAPIエンドポイントを使用
+        const intuitiveBody = {
+          template: template,
+          strategy: strategy,
+          payload_sets: payloadSets.map(payloadSet => ({
+            token: payloadSet.name,
+            strategy: "dictionary", // デフォルト戦略
+            values: payloadSet.payloads
+          }))
+        };
+        
+        const response = await fetch('/api/intuitive', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(intuitiveBody)
         });
+
+        const result = await response.json();
         
-        const data = await res.json();
-        
-        if (res.ok) {
-          displayResults(data);
+        if (response.ok) {
+          displayResults(result);
         } else {
-          displayError(data.detail || 'エラーが発生しました');
+          document.getElementById('result').innerHTML = `
+            <div class="alert alert-danger">
+              <h5><i class="bi bi-exclamation-triangle"></i> エラー</h5>
+              <p>${result.detail || 'リクエストに失敗しました'}</p>
+            </div>
+          `;
         }
-      } catch (e) {
-        displayError('ネットワークエラー: ' + e.message);
+      } catch (error) {
+        document.getElementById('result').innerHTML = `
+          <div class="alert alert-danger">
+            <h5><i class="bi bi-exclamation-triangle"></i> エラー</h5>
+            <p>ネットワークエラー: ${error.message}</p>
+          </div>
+        `;
       } finally {
         button.disabled = false;
         spinner.style.display = 'none';
       }
     }
 
-    function displayResults(data) {
-      const strategyNames = {
-        'sniper': 'Sniper Attack',
-        'battering_ram': 'Battering Ram Attack',
-        'pitchfork': 'Pitchfork Attack',
-        'cluster_bomb': 'Cluster Bomb Attack'
-      };
+    function displayResults(result) {
+      const resultDiv = document.getElementById('result');
+      
+      if (!result.requests || result.requests.length === 0) {
+        resultDiv.innerHTML = `
+          <div class="alert alert-warning">
+            <h5><i class="bi bi-exclamation-triangle"></i> 警告</h5>
+            <p>生成されたリクエストがありません</p>
+          </div>
+        `;
+        return;
+      }
 
       let html = `
-        <div class="mb-3">
-          <span class="badge bg-primary strategy-badge">${strategyNames[data.strategy] || data.strategy}</span>
-          <span class="badge bg-success strategy-badge">${data.total_requests} リクエスト</span>
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h5><i class="bi bi-check-circle text-success"></i> 成功</h5>
+          <span class="badge bg-primary">${result.requests.length} リクエスト生成</span>
         </div>
         <div class="accordion" id="resultsAccordion">
       `;
 
-      data.requests.forEach((request, index) => {
+      result.requests.forEach((request, index) => {
         const accordionId = `accordion-${index}`;
+        const collapseId = `collapse-${index}`;
+        const isFirst = index === 0;
+        
         html += `
           <div class="accordion-item">
-            <h2 class="accordion-header" id="heading-${accordionId}">
-              <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-${accordionId}">
-                リクエスト ${index + 1}
+            <h2 class="accordion-header" id="${accordionId}">
+              <button class="accordion-button ${isFirst ? '' : 'collapsed'}" type="button" data-bs-toggle="collapse" data-bs-target="#${collapseId}" aria-expanded="${isFirst ? 'true' : 'false'}" aria-controls="${collapseId}">
+                <i class="bi bi-file-text me-2"></i> リクエスト ${index + 1}
+                ${request.strategy ? `<span class="badge bg-secondary strategy-badge ms-auto">${request.strategy}</span>` : ''}
               </button>
             </h2>
-            <div id="collapse-${accordionId}" class="accordion-collapse collapse" data-bs-parent="#resultsAccordion">
+            <div id="${collapseId}" class="accordion-collapse collapse ${isFirst ? 'show' : ''}" aria-labelledby="${accordionId}" data-bs-parent="#resultsAccordion">
               <div class="accordion-body">
-                <div class="mb-2"><strong>生成されたリクエスト:</strong></div>
-                <pre class="bg-light p-2 rounded font-monospace small" style="margin-bottom:0;">${escapeHtml(request.request)}</pre>
-                ${request.payloads ? `
-                  <div class="mt-2">
-                    <strong>使用されたペイロード:</strong>
-                    <ul class="list-unstyled mt-1">
-                      ${Object.entries(request.payloads).map(([key, value]) => 
-                        `<li><code>${key}:</code> ${escapeHtml(value)}</li>`
-                      ).join('')}
-                    </ul>
-                  </div>
-                ` : ''}
-                ${request.placeholder ? `
-                  <div class="mt-2">
-                    <strong>プレースホルダ:</strong> <code>${request.placeholder}</code><br>
-                    <strong>ペイロード:</strong> <code>${escapeHtml(request.payload)}</code>
-                  </div>
-                ` : ''}
+                <pre class="mb-0" style="white-space: pre-wrap; word-break: break-all;">${escapeHtml(request.request)}</pre>
               </div>
             </div>
           </div>
@@ -453,16 +584,7 @@ image.jpg`);
       });
 
       html += '</div>';
-      document.getElementById('result').innerHTML = html;
-    }
-
-    function displayError(message) {
-      document.getElementById('result').innerHTML = `
-        <div class="alert alert-danger">
-          <i class="bi bi-exclamation-triangle"></i>
-          <strong>エラー:</strong> ${message}
-        </div>
-      `;
+      resultDiv.innerHTML = html;
     }
 
     function escapeHtml(text) {
@@ -471,24 +593,45 @@ image.jpg`);
       return div.innerHTML;
     }
 
-    window.onload = function() {
-      // テンプレートのCodeMirrorを初期化
-      const templateTextarea = document.getElementById('template');
-      templateCodeMirror = CodeMirror.fromTextArea(templateTextarea, {
+    // 初期化処理
+    document.addEventListener('DOMContentLoaded', function() {
+      // CodeMirrorの初期化（一時的に無効化）
+      /*
+      templateCodeMirror = CodeMirror.fromTextArea(document.getElementById('template'), {
         mode: 'text/plain',
         theme: 'monokai',
         lineNumbers: true,
         lineWrapping: true,
         indentUnit: 2,
         tabSize: 2,
-        placeholder: '例: GET /api/users?id=<<>> HTTP/1.1'
+        extraKeys: {
+          'Tab': function(cm) {
+            cm.replaceSelection('  ', 'end');
+          }
+        }
       });
+
+      jsonCodeMirror = CodeMirror.fromTextArea(document.getElementById('json-input'), {
+        mode: 'application/json',
+        theme: 'monokai',
+        lineNumbers: true,
+        lineWrapping: true,
+        indentUnit: 2,
+        tabSize: 2,
+        extraKeys: {
+          'Tab': function(cm) {
+            cm.replaceSelection('  ', 'end');
+          }
+        }
+      });
+      */
+
+      // デフォルトのSniperサンプルを読み込み
+      loadSampleJson();
       
-      // CodeMirrorの初期化後に例を読み込み
-      setTimeout(() => {
-        loadSniperExample();
-      }, 100);
-    };
+      // デフォルトのテンプレートも読み込み
+      loadSniperExample();
+    });
   </script>
 </body>
-</html> 
+</html>

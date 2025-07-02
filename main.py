@@ -76,6 +76,81 @@ class PayloadSet(BaseModel):
     name: str
     payloads: List[str]
 
+class MutationValue(BaseModel):
+    """
+    変異値の定義（辞書的な値またはrepeat機能付きの値）
+    
+    Attributes:
+        value (str): 基本値
+        repeat (Optional[int]): 繰り返し回数（指定された場合、valueをrepeat回繰り返す）
+    """
+    value: str
+    repeat: Optional[int] = None
+
+def process_mutation_values(values: List[Union[str, MutationValue]]) -> List[str]:
+    """
+    変異値のリストを処理して、実際のペイロードリストを生成する
+    
+    Args:
+        values (List[Union[str, MutationValue]]): 変異値のリスト
+        
+    Returns:
+        List[str]: 処理されたペイロードのリスト
+    """
+    processed_payloads = []
+    
+    for value in values:
+        if isinstance(value, str):
+            # 文字列の場合はそのまま追加
+            processed_payloads.append(value)
+        elif isinstance(value, MutationValue):
+            # MutationValueの場合はrepeat機能を処理
+            if value.repeat is not None and value.repeat > 0:
+                # repeat回数分繰り返す
+                processed_payloads.append(value.value * value.repeat)
+            else:
+                # repeatが指定されていない場合はそのまま追加
+                processed_payloads.append(value.value)
+    
+    return processed_payloads
+
+class Mutation(BaseModel):
+    """
+    変異の定義
+    
+    Attributes:
+        token (str): 置換対象のトークン（例: "<<X>>"）
+        strategy (str): 変異戦略（"dictionary", "numbers"など）
+        values (List[Union[str, MutationValue]]): 変異値のリスト
+    """
+    token: str
+    strategy: str
+    values: List[Union[str, MutationValue]]
+
+class IntuitiveRequest(BaseModel):
+    """
+    直感的なプレースホルダ置換リクエストの定義
+    
+    Attributes:
+        template (str): プレースホルダを含むテンプレート文字列
+        strategy (str): 攻撃戦略（sniper, battering_ram, pitchfork, cluster_bomb）
+        payload_sets (List[Mutation]): ペイロードセットのリスト（token, strategy, valuesを含む）
+    """
+    template: str
+    strategy: AttackStrategy
+    payload_sets: List[Mutation]
+
+class MutationRequest(BaseModel):
+    """
+    変異ベースのプレースホルダ置換リクエストの定義
+    
+    Attributes:
+        template (str): プレースホルダを含むテンプレート文字列
+        mutations (List[Mutation]): 変異のリスト
+    """
+    template: str
+    mutations: List[Mutation]
+
 class PlaceholderRequest(BaseModel):
     """
     プレースホルダ置換リクエストの定義
@@ -435,6 +510,51 @@ class FuzzerEngine:
         
         return requests
 
+    def mutation_attack(self, template: str, mutations: List[Mutation]) -> List[Dict[str, Any]]:
+        """
+        変異ベース攻撃: 各トークンに対して指定された変異を適用
+        
+        変異ベース攻撃では、各トークンに対して辞書的な値やrepeat機能付きの値を
+        適用してリクエストを生成します。
+        
+        Args:
+            template (str): プレースホルダを含むテンプレート文字列
+            mutations (List[Mutation]): 変異のリスト
+            
+        Returns:
+            List[Dict[str, Any]]: 生成されたリクエストのリスト
+        """
+        requests = []
+        
+        # オリジナルのテンプレート（全てのトークンを空文字列で置換）を最初に追加
+        original_template = template
+        for mutation in mutations:
+            original_template = original_template.replace(mutation.token, "")
+        requests.append({
+            "request": original_template,
+            "placeholder": "original",
+            "payload": "",
+            "position": 0
+        })
+        
+        # 各変異に対して処理
+        for mutation in mutations:
+            # 変異値を処理してペイロードリストを生成
+            payloads = process_mutation_values(mutation.values)
+            
+            # 各ペイロードに対してリクエストを生成
+            for i, payload in enumerate(payloads):
+                result = template.replace(mutation.token, payload)
+                requests.append({
+                    "request": result,
+                    "placeholder": mutation.token,
+                    "payload": payload,
+                    "position": i + 1,
+                    "strategy": mutation.strategy
+                })
+        
+        return requests
+
 fuzzer = FuzzerEngine()
 
 @app.post("/api/replace-placeholders", response_model=PlaceholderResponse)
@@ -492,6 +612,103 @@ async def replace_placeholders(request: PlaceholderRequest, db: Session = Depend
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"内部エラー: {str(e)}")
+
+@app.post("/api/mutations", response_model=PlaceholderResponse)
+async def apply_mutations(request: MutationRequest, db: Session = Depends(get_db)):
+    """
+    変異ベースのプレースホルダ置換を実行
+    
+    各トークンに対して指定された変異（辞書的な値やrepeat機能付きの値）を適用して
+    リクエストを生成します。
+    
+    Args:
+        request (MutationRequest): 変異リクエスト
+        db (Session): データベースセッション
+        
+    Returns:
+        PlaceholderResponse: 生成されたリクエストの情報
+    """
+    try:
+        # 変異ベース攻撃を実行
+        requests = fuzzer.mutation_attack(request.template, request.mutations)
+        
+        # データベースに保存
+        fuzzer_request = FuzzerRequest(
+            template=request.template,
+            strategy="mutation",
+            total_requests=len(requests)
+        )
+        fuzzer_request.set_placeholders([mutation.token for mutation in request.mutations])
+        fuzzer_request.set_payload_sets([])  # mutationsではpayload_setsは使用しない
+        db.add(fuzzer_request)
+        db.commit()
+        db.refresh(fuzzer_request)
+        
+        # 生成されたリクエストをデータベースに保存
+        for i, req in enumerate(requests):
+            generated_request = GeneratedRequest(
+                fuzzer_request_id=fuzzer_request.id,
+                request_number=i + 1,
+                request_content=req["request"],
+                placeholder=req.get("placeholder", ""),
+                payload=req.get("payload", ""),
+                position=req.get("position", 0)
+            )
+            db.add(generated_request)
+        db.commit()
+        
+        return PlaceholderResponse(
+            strategy="mutation",
+            total_requests=len(requests),
+            requests=requests,
+            request_id=fuzzer_request.id
+        )
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/intuitive", response_model=PlaceholderResponse)
+async def intuitive_replace_placeholders(request: IntuitiveRequest, db: Session = Depends(get_db)):
+    """
+    直感的なプレースホルダ置換API
+    
+    placeholdersを使わずに、payload_setsのtokenから自動的にプレースホルダを抽出します。
+    """
+    try:
+        # payload_setsからプレースホルダを自動抽出（<<>>を除去）
+        placeholders = []
+        for payload_set in request.payload_sets:
+            # <<username>> -> username に変換
+            placeholder_name = payload_set.token.strip("<>")
+            placeholders.append(placeholder_name)
+        
+        # payload_setsを従来の形式に変換
+        converted_payload_sets = []
+        for payload_set in request.payload_sets:
+            # valuesを処理してペイロードリストを生成
+            processed_payloads = process_mutation_values(payload_set.values)
+            
+            # プレースホルダ名をnameとして使用
+            placeholder_name = payload_set.token.strip("<>")
+            converted_payload_sets.append(PayloadSet(
+                name=placeholder_name,
+                payloads=processed_payloads
+            ))
+        
+        # 従来のリクエスト形式に変換
+        placeholder_request = PlaceholderRequest(
+            template=request.template,
+            placeholders=placeholders,
+            strategy=request.strategy,
+            payload_sets=converted_payload_sets
+        )
+        
+        # 既存の処理を再利用
+        return await replace_placeholders(placeholder_request, db)
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"リクエストの処理に失敗しました: {str(e)}")
 
 @app.get("/")
 async def root():

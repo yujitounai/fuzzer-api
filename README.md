@@ -318,3 +318,85 @@ fuzzer20250630/
 ## ライセンス
 
 MIT License 
+
+### 基本的な使用例
+
+**Sniper攻撃の例:**
+
+```json
+{
+  "template": "GET /hack/normalxss.php?cmd=<<>> HTTP/1.1\nHost: bogus.jp\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\nAccept-Encoding: gzip, deflate, br, zstd\nAccept-Language: ja,en-US;q=0.9,en;q=0.8",
+  "placeholders": ["cmd", "host"],
+  "strategy": "sniper",
+  "payload_sets": [
+    {
+      "name": "sql_injection",
+      "payloads": ["1", "1' OR '1'='1", "1; DROP TABLE users; --"]
+    }
+  ]
+}
+```
+
+### 変異機能（Mutations）
+
+辞書的な値に加えて、長大な文字列を生成するためのrepeat機能をサポートしています。
+
+**変異機能の使用例:**
+
+```json
+{
+  "template": "GET /api/test?param=<<X>> HTTP/1.1\nHost: example.com",
+  "mutations": [
+    {
+      "token": "<<X>>",
+      "strategy": "dictionary",
+      "values": [
+        "<script>",
+        "' OR 1=1 --",
+        {
+          "value": "A",
+          "repeat": 1000
+        },
+        {
+          "value": "ABC",
+          "repeat": 500
+        }
+      ]
+    }
+  ]
+}
+```
+
+**複数トークンの例:**
+
+```json
+{
+  "template": "GET /api/test?param1=<<X>>&param2=<<Y>> HTTP/1.1\nHost: example.com",
+  "mutations": [
+    {
+      "token": "<<X>>",
+      "strategy": "dictionary",
+      "values": [
+        "test1",
+        {
+          "value": "A",
+          "repeat": 100
+        }
+      ]
+    },
+    {
+      "token": "<<Y>>",
+      "strategy": "dictionary",
+      "values": [
+        "test2",
+        {
+          "value": "B",
+          "repeat": 50
+        }
+      ]
+    }
+  ]
+}
+```
+
+**エンドポイント:** `POST /api/mutations` 
