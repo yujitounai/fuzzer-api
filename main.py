@@ -34,11 +34,19 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# APIルーターを作成
+from fastapi import APIRouter
+
+api_router = APIRouter(prefix="/api")
+
 # データベーステーブルの作成
 db_manager.create_tables()
 
 # 静的ファイルを配信
 app.mount("/static", StaticFiles(directory="."), name="static")
+
+# APIルーターをアプリケーションに登録
+app.include_router(api_router)
 
 # データベースセッションの依存関係
 def get_db():
@@ -351,7 +359,7 @@ class FuzzerEngine:
 
 fuzzer = FuzzerEngine()
 
-@app.post("/replace-placeholders", response_model=PlaceholderResponse)
+@app.post("/api/replace-placeholders", response_model=PlaceholderResponse)
 async def replace_placeholders(request: PlaceholderRequest, db: Session = Depends(get_db)):
     """
     プレースホルダ置換APIエンドポイント
@@ -421,11 +429,11 @@ async def root():
         "message": "プレースホルダ置換API",
         "version": "1.0.0",
         "endpoints": {
-            "POST /replace-placeholders": "プレースホルダ置換API（データベースに保存）",
-            "GET /history": "ファザーリクエストの履歴取得",
-            "GET /history/{id}": "特定のファザーリクエストの詳細取得",
-            "DELETE /history/{id}": "特定のファザーリクエストの削除",
-            "GET /statistics": "データベース統計情報",
+            "POST /api/replace-placeholders": "プレースホルダ置換API（データベースに保存）",
+            "GET /api/history": "ファザーリクエストの履歴取得",
+            "GET /api/history/{id}": "特定のファザーリクエストの詳細取得",
+            "DELETE /api/history/{id}": "特定のファザーリクエストの削除",
+            "GET /api/statistics": "データベース統計情報",
             "GET /test": "テスト用Webインターフェース",
             "GET /history-page": "履歴表示用Webインターフェース",
             "GET /docs": "APIドキュメント"
@@ -447,7 +455,7 @@ async def root():
         }
     }
 
-@app.get("/history", response_model=List[FuzzerRequestResponse])
+@app.get("/api/history", response_model=List[FuzzerRequestResponse])
 async def get_history(db: Session = Depends(get_db), limit: int = 50, offset: int = 0):
     """
     ファザーリクエストの履歴を取得するエンドポイント
@@ -475,7 +483,7 @@ async def get_history(db: Session = Depends(get_db), limit: int = 50, offset: in
     
     return history
 
-@app.get("/history/{request_id}", response_model=PlaceholderResponse)
+@app.get("/api/history/{request_id}", response_model=PlaceholderResponse)
 async def get_request_detail(request_id: int, db: Session = Depends(get_db)):
     """
     特定のファザーリクエストの詳細を取得するエンドポイント
@@ -517,7 +525,7 @@ async def get_request_detail(request_id: int, db: Session = Depends(get_db)):
         request_id=fuzzer_request.id
     )
 
-@app.delete("/history/{request_id}")
+@app.delete("/api/history/{request_id}")
 async def delete_request(request_id: int, db: Session = Depends(get_db)):
     """
     特定のファザーリクエストを削除するエンドポイント
@@ -538,7 +546,7 @@ async def delete_request(request_id: int, db: Session = Depends(get_db)):
     
     return {"message": f"リクエストID {request_id} を削除しました"}
 
-@app.get("/statistics", response_model=StatisticsResponse)
+@app.get("/api/statistics", response_model=StatisticsResponse)
 async def get_statistics(db: Session = Depends(get_db)):
     """
     データベースの統計情報を取得するエンドポイント

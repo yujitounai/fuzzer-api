@@ -165,7 +165,7 @@
         // 統計情報を読み込み
         async function loadStatistics() {
             try {
-                const response = await fetch('/statistics');
+                const response = await fetch('/api/statistics');
                 const stats = await response.json();
                 
                 document.getElementById('total-requests').textContent = stats.total_fuzzer_requests;
@@ -204,7 +204,7 @@
             historyList.innerHTML = '';
             
             try {
-                const response = await fetch(`/history?limit=${currentLimit}&offset=${currentPage * currentLimit}`);
+                const response = await fetch(`/api/history?limit=${currentLimit}&offset=${currentPage * currentLimit}`);
                 const history = await response.json();
                 
                 if (history.length === 0) {
@@ -289,7 +289,7 @@
         // 詳細を表示
         async function showDetail(requestId) {
             try {
-                const response = await fetch(`/history/${requestId}`);
+                const response = await fetch(`/api/history/${requestId}`);
                 const detail = await response.json();
                 
                 const detailContent = document.getElementById('detail-content');
@@ -351,7 +351,7 @@
             }
             
             try {
-                const response = await fetch(`/history/${requestId}`, {
+                const response = await fetch(`/api/history/${requestId}`, {
                     method: 'DELETE'
                 });
                 

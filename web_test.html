@@ -292,7 +292,7 @@ admin123`);
       `;
 
       try {
-        const res = await fetch('/replace-placeholders', {
+        const res = await fetch('/api/replace-placeholders', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body)
