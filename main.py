@@ -23,6 +23,7 @@ from typing import List, Dict, Any, Optional, Union
 import itertools
 from enum import Enum
 import uvicorn
+import asyncio
 from sqlalchemy.orm import Session
 
 # データベース関連のインポート
@@ -30,6 +31,7 @@ from database import db_manager, FuzzerRequest, GeneratedRequest
 
 # HTTPリクエスト送信関連のインポート
 from http_client import RequestExecutor, HTTPRequestConfig
+from job_manager import job_manager
 
 app = FastAPI(
     title="プレースホルダ置換API",
@@ -287,6 +289,47 @@ class ExecuteSingleResponseModel(BaseModel):
     position: int
     request: Dict[str, Any]
     http_response: Optional[Dict[str, Any]] = None
+
+class JobResponseModel(BaseModel):
+    """
+    ジョブ作成レスポンスの定義
+    
+    Attributes:
+        job_id (str): ジョブのID
+        status (str): ジョブの状態
+        message (str): メッセージ
+    """
+    job_id: str
+    status: str
+    message: str
+
+class JobStatusResponseModel(BaseModel):
+    """
+    ジョブ状態レスポンスの定義
+    
+    Attributes:
+        job_id (str): ジョブのID
+        status (str): ジョブの状態
+        progress (Dict[str, Any]): 進捗情報
+        results (Optional[List[Dict[str, Any]]]): 実行結果
+        error_message (Optional[str]): エラーメッセージ
+    """
+    job_id: str
+    status: str
+    progress: Dict[str, Any]
+    results: Optional[List[Dict[str, Any]]] = None
+    error_message: Optional[str] = None
+
+class JobListResponseModel(BaseModel):
+    """
+    ジョブ一覧レスポンスの定義
+    
+    Attributes:
+        jobs (List[Dict[str, Any]]): ジョブのリスト
+        total (int): 総ジョブ数
+    """
+    jobs: List[Dict[str, Any]]
+    total: int
 
 class FuzzerEngine:
     def __init__(self):
@@ -556,6 +599,44 @@ class FuzzerEngine:
         return requests
 
 fuzzer = FuzzerEngine()
+
+async def execute_single_request_async(request_data: Dict[str, Any], http_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    単一リクエストを非同期で実行するヘルパー関数
+    
+    Args:
+        request_data (Dict[str, Any]): リクエストデータ
+        http_config (Optional[Dict[str, Any]]): HTTP設定
+        
+    Returns:
+        Dict[str, Any]: 実行結果
+    """
+    try:
+        # HTTP設定を適用
+        config = HTTPRequestConfig()
+        if http_config:
+            config.timeout = http_config.get('timeout', 30)
+            config.follow_redirects = http_config.get('follow_redirects', True)
+            config.verify_ssl = http_config.get('verify_ssl', False)
+            config.scheme = http_config.get('scheme', 'http')
+            config.base_url = http_config.get('base_url', 'localhost:8000')
+            config.additional_headers = http_config.get('additional_headers')
+        
+        # リクエスト実行
+        executor = RequestExecutor(config)
+        result = await executor.execute_request(request_data['request'])
+        
+        return {
+            'request': request_data,
+            'http_response': result,
+            'success': True
+        }
+    except Exception as e:
+        return {
+            'request': request_data,
+            'error': str(e),
+            'success': False
+        }
 
 @app.post("/api/replace-placeholders", response_model=PlaceholderResponse)
 async def replace_placeholders(request: PlaceholderRequest, db: Session = Depends(get_db)):
@@ -855,72 +936,85 @@ async def get_statistics(db: Session = Depends(get_db)):
     stats = db_manager.get_statistics(db)
     return StatisticsResponse(**stats)
 
-@app.post("/api/execute-requests", response_model=ExecuteResponseModel)
+@app.post("/api/execute-requests", response_model=JobResponseModel)
 async def execute_requests(request: ExecuteRequestModel, db: Session = Depends(get_db)):
     """
-    生成されたリクエストを実際にHTTPリクエストとして送信するエンドポイント
+    リクエスト実行APIエンドポイント（JobManager使用）
+    
+    指定されたリクエストIDの全ての生成されたリクエストをバックグラウンドで実行します。
     
     Args:
         request (ExecuteRequestModel): 実行リクエスト
         db (Session): データベースセッション
         
     Returns:
-        ExecuteResponseModel: 実行結果
+        JobResponseModel: ジョブ作成結果
         
     Raises:
         HTTPException: リクエストが見つからない場合
     """
-    # ファザーリクエストを取得
-    fuzzer_request = db_manager.get_fuzzer_request_by_id(db, request.request_id)
-    if not fuzzer_request:
-        raise HTTPException(status_code=404, detail="リクエストが見つかりません")
-    
-    # 生成されたリクエストを取得
-    generated_requests = []
-    for gen_req in fuzzer_request.generated_requests:
-        req_dict = {
-            "request": gen_req.request_content,
-            "placeholder": gen_req.placeholder,
-            "payload": gen_req.payload,
-            "position": gen_req.position
-        }
-        
-        # applied_toフィールドがある場合は追加
-        if gen_req.applied_to:
-            req_dict["applied_to"] = gen_req.get_applied_to()
-        
-        generated_requests.append(req_dict)
-    
-    # HTTP設定を準備
-    http_config = None
-    if request.http_config:
-        http_config = HTTPRequestConfig(
-            timeout=request.http_config.timeout,
-            follow_redirects=request.http_config.follow_redirects,
-            verify_ssl=request.http_config.verify_ssl,
-            scheme=request.http_config.scheme,
-            base_url=request.http_config.base_url,
-            headers=request.http_config.additional_headers
-        )
-    
     try:
-        # リクエストを実行
-        results = await RequestExecutor.execute_requests(generated_requests, http_config)
+        # リクエストを取得
+        fuzzer_request = db_manager.get_fuzzer_request_by_id(db, request.request_id)
+        if not fuzzer_request:
+            raise HTTPException(status_code=404, detail="リクエストが見つかりません")
         
-        # 成功・失敗の数をカウント
-        successful_requests = sum(1 for r in results if r.get("http_response", {}).get("error") is None)
-        failed_requests = len(results) - successful_requests
+        # 生成されたリクエストを取得
+        generated_requests = []
+        for gen_req in fuzzer_request.generated_requests:
+            req_dict = {
+                "request": gen_req.request_content,
+                "placeholder": gen_req.placeholder,
+                "payload": gen_req.payload,
+                "position": gen_req.position
+            }
+            
+            # applied_toフィールドがある場合は追加
+            if gen_req.applied_to:
+                req_dict["applied_to"] = gen_req.get_applied_to()
+            
+            generated_requests.append(req_dict)
         
-        return ExecuteResponseModel(
+        # HTTP設定を辞書形式に変換
+        http_config_dict = None
+        if request.http_config:
+            http_config_dict = {
+                'timeout': request.http_config.timeout,
+                'follow_redirects': request.http_config.follow_redirects,
+                'verify_ssl': request.http_config.verify_ssl,
+                'scheme': request.http_config.scheme,
+                'base_url': request.http_config.base_url,
+                'additional_headers': request.http_config.additional_headers
+            }
+        
+        # ジョブを作成
+        job_name = f"Execute Requests - ID {request.request_id}"
+        job_id = job_manager.create_job(
+            name=job_name,
             request_id=request.request_id,
-            total_requests=len(results),
-            successful_requests=successful_requests,
-            failed_requests=failed_requests,
-            results=results
+            total_requests=len(generated_requests),
+            http_config=http_config_dict
         )
         
+        # バックグラウンドでジョブを実行
+        asyncio.create_task(
+            job_manager.execute_requests_job(
+                job_id=job_id,
+                requests=generated_requests,
+                http_config=http_config_dict
+            )
+        )
+        
+        return JobResponseModel(
+            job_id=job_id,
+            status="pending",
+            message=f"ジョブが作成されました。ジョブID: {job_id}"
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"リクエスト実行エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"実行エラー: {str(e)}")
 
 @app.post("/api/execute-single-request", response_model=ExecuteSingleResponseModel)
 async def execute_single_request(request: ExecuteSingleRequestModel, db: Session = Depends(get_db)):
@@ -990,6 +1084,112 @@ async def execute_single_request(request: ExecuteSingleRequestModel, db: Session
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"リクエスト実行エラー: {str(e)}")
+
+@app.get("/api/jobs", response_model=JobListResponseModel)
+async def get_jobs():
+    """
+    ジョブ一覧を取得するエンドポイント
+    
+    Returns:
+        JobListResponseModel: ジョブ一覧
+    """
+    jobs = job_manager.get_all_jobs()
+    return JobListResponseModel(
+        jobs=[job.to_dict() for job in jobs],
+        total=len(jobs)
+    )
+
+@app.get("/api/jobs/{job_id}", response_model=JobStatusResponseModel)
+async def get_job_status(job_id: str):
+    """
+    ジョブの状態を取得するエンドポイント
+    
+    Args:
+        job_id (str): ジョブのID
+        
+    Returns:
+        JobStatusResponseModel: ジョブの状態
+        
+    Raises:
+        HTTPException: ジョブが見つからない場合
+    """
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="ジョブが見つかりません")
+    
+    return JobStatusResponseModel(
+        job_id=job.id,
+        status=job.status.value,
+        progress=job.progress.to_dict(),
+        results=job.results,
+        error_message=job.error_message
+    )
+
+@app.delete("/api/jobs/{job_id}")
+async def cancel_job(job_id: str):
+    """
+    ジョブをキャンセルするエンドポイント
+    
+    Args:
+        job_id (str): ジョブのID
+        
+    Returns:
+        Dict[str, str]: キャンセル結果
+        
+    Raises:
+        HTTPException: ジョブが見つからない場合
+    """
+    success = job_manager.cancel_job(job_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="ジョブが見つかりません")
+    
+    return {"message": f"ジョブ {job_id} をキャンセルしました"}
+
+@app.delete("/api/jobs/{job_id}/delete")
+async def delete_job(job_id: str):
+    """
+    ジョブを削除するエンドポイント
+    
+    Args:
+        job_id (str): ジョブのID
+        
+    Returns:
+        Dict[str, str]: 削除結果
+        
+    Raises:
+        HTTPException: ジョブが見つからない場合
+    """
+    success = job_manager.delete_job(job_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="ジョブが見つかりません")
+    
+    return {"message": f"ジョブ {job_id} を削除しました"}
+
+@app.post("/api/jobs/cleanup")
+async def cleanup_jobs(max_age_hours: int = 24):
+    """
+    古いジョブを削除するエンドポイント
+    
+    Args:
+        max_age_hours (int): 最大保持時間（時間）
+        
+    Returns:
+        Dict[str, Any]: クリーンアップ結果
+    """
+    deleted_count = job_manager.cleanup_old_jobs(max_age_hours)
+    return {
+        "message": f"{deleted_count} 個の古いジョブを削除しました",
+        "deleted_count": deleted_count,
+        "max_age_hours": max_age_hours
+    }
+
+@app.get("/api/jobs/statistics")
+async def get_job_statistics():
+    """
+    ジョブ統計情報を取得するエンドポイント
+    """
+    stats = job_manager.get_job_statistics()
+    return stats  # 404をraiseしない
 
 @app.get("/test", response_class=HTMLResponse)
 async def test_page():

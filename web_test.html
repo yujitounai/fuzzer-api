@@ -34,6 +34,7 @@
     <div class="container">
       <a class="navbar-brand" href="#"><i class="bi bi-bug"></i> プレースホルダ置換API</a>
       <div class="navbar-nav ms-auto">
+        <a class="nav-link" href="/history-page"><i class="bi bi-clock-history"></i> 履歴</a>
         <a class="nav-link" href="/docs" target="_blank"><i class="bi bi-file-text"></i> API Docs</a>
       </div>
     </div>
@@ -542,6 +543,8 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
         const result = await response.json();
         
         if (response.ok) {
+          // リクエスト結果を保存
+          lastRequestResult = result;
           displayResults(result);
         } else {
           document.getElementById('result').innerHTML = `
@@ -580,7 +583,12 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
       let html = `
         <div class="d-flex justify-content-between align-items-center mb-3">
           <h5><i class="bi bi-check-circle text-success"></i> 成功</h5>
-          <span class="badge bg-primary">${result.requests.length} リクエスト生成</span>
+          <div>
+            <span class="badge bg-primary me-2">${result.requests.length} リクエスト生成</span>
+            <button class="btn btn-success btn-sm" onclick="executeJob()">
+              <i class="bi bi-play-circle"></i> ジョブ実行
+            </button>
+          </div>
         </div>
         <div class="accordion" id="resultsAccordion">
       `;
@@ -615,6 +623,245 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
       const div = document.createElement('div');
       div.textContent = text;
       return div.innerHTML;
+    }
+
+    // グローバル変数で最後のリクエスト結果を保存
+    let lastRequestResult = null;
+
+            // ジョブ実行機能
+        async function executeJob() {
+          if (!lastRequestResult) {
+            alert('実行するリクエストがありません。先にAPIを実行してください。');
+            return;
+          }
+
+          // 実行設定を取得
+          const scheme = prompt('プロトコル (http/https):', 'http');
+          if (!scheme) return;
+          
+          const baseUrl = prompt('ベースURL:', 'localhost:8000');
+          if (!baseUrl) return;
+          
+          const timeout = prompt('タイムアウト（秒）:', '30');
+          if (!timeout) return;
+          
+          const followRedirects = confirm('リダイレクトを追跡しますか？');
+          const verifySsl = confirm('SSL証明書を検証しますか？');
+
+          const button = document.querySelector('.btn-success');
+          const originalText = button.innerHTML;
+          button.disabled = true;
+          button.innerHTML = '<i class="bi bi-hourglass-split"></i> 実行中...';
+
+          try {
+            const response = await fetch('/api/execute-requests', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                request_id: lastRequestResult.request_id,
+                http_config: {
+                  scheme: scheme,
+                  base_url: baseUrl,
+                  timeout: parseInt(timeout),
+                  follow_redirects: followRedirects,
+                  verify_ssl: verifySsl,
+                  additional_headers: null
+                }
+              })
+            });
+
+            const result = await response.json();
+            
+            if (response.ok) {
+              // ジョブIDを取得してポーリング開始
+              if (result.job_id) {
+                pollJobResult(result.job_id);
+              } else {
+                displayJobResult(result);
+              }
+            } else {
+              alert(`ジョブ実行に失敗しました: ${result.detail || 'エラーが発生しました'}`);
+            }
+          } catch (error) {
+            alert(`ジョブ実行に失敗しました: ${error.message}`);
+          } finally {
+            button.disabled = false;
+            button.innerHTML = originalText;
+          }
+        }
+
+        // ジョブ結果をポーリング
+        async function pollJobResult(jobId) {
+          const maxAttempts = 60; // 最大60回試行（5分間）
+          let attempts = 0;
+          
+          // 実行中メッセージを表示
+          const resultDiv = document.getElementById('result');
+          resultDiv.innerHTML = `
+            <div class="text-center p-4">
+              <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">実行中...</span>
+              </div>
+              <p class="mt-2">ジョブ実行中... (${attempts}/${maxAttempts})</p>
+              <small class="text-muted">ジョブID: ${jobId.substring(0, 8)}...</small>
+            </div>
+          `;
+
+          const pollInterval = setInterval(async () => {
+            attempts++;
+            
+            try {
+              const response = await fetch(`/api/jobs/${jobId}`);
+              const job = await response.json();
+              
+              // 実行中メッセージを更新
+              resultDiv.innerHTML = `
+                <div class="text-center p-4">
+                  <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">実行中...</span>
+                  </div>
+                  <p class="mt-2">ジョブ実行中... (${attempts}/${maxAttempts})</p>
+                  <p class="text-muted">ステータス: ${getJobStatusText(job.status)}</p>
+                  <small class="text-muted">ジョブID: ${jobId.substring(0, 8)}...</small>
+                </div>
+              `;
+              
+              // ジョブが完了したかチェック
+              if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+                clearInterval(pollInterval);
+                
+                if (job.status === 'completed') {
+                  displayJobResult({
+                    total_requests: job.total_requests,
+                    successful_requests: job.successful_requests,
+                    failed_requests: job.failed_requests,
+                    results: job.results || []
+                  });
+                } else {
+                  resultDiv.innerHTML = `
+                    <div class="alert alert-danger">
+                      <h5><i class="bi bi-exclamation-triangle"></i> ジョブ実行失敗</h5>
+                      <p>ジョブが${getJobStatusText(job.status)}状態で終了しました。</p>
+                      <small>ジョブID: ${jobId}</small>
+                    </div>
+                  `;
+                }
+              }
+              
+              // 最大試行回数に達した場合
+              if (attempts >= maxAttempts) {
+                clearInterval(pollInterval);
+                resultDiv.innerHTML = `
+                  <div class="alert alert-warning">
+                    <h5><i class="bi bi-clock"></i> タイムアウト</h5>
+                    <p>ジョブの実行がタイムアウトしました。後で履歴ページで結果を確認してください。</p>
+                    <small>ジョブID: ${jobId}</small>
+                  </div>
+                `;
+              }
+              
+            } catch (error) {
+              console.error('ジョブ状態の取得に失敗しました:', error);
+              attempts++;
+              
+              if (attempts >= maxAttempts) {
+                clearInterval(pollInterval);
+                resultDiv.innerHTML = `
+                  <div class="alert alert-danger">
+                    <h5><i class="bi bi-exclamation-triangle"></i> エラー</h5>
+                    <p>ジョブ状態の取得に失敗しました。</p>
+                    <small>ジョブID: ${jobId}</small>
+                  </div>
+                `;
+              }
+            }
+          }, 5000); // 5秒間隔でポーリング
+        }
+
+        // ジョブステータスの日本語表示
+        function getJobStatusText(status) {
+          const texts = {
+            'pending': '待機中',
+            'running': '実行中',
+            'completed': '完了',
+            'failed': '失敗',
+            'cancelled': 'キャンセル'
+          };
+          return texts[status] || status;
+        }
+
+    function displayJobResult(result) {
+      const resultDiv = document.getElementById('result');
+      
+      let html = `
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h5><i class="bi bi-check-circle text-success"></i> ジョブ実行完了</h5>
+          <div>
+            <span class="badge bg-success me-2">成功: ${result.successful_requests}</span>
+            <span class="badge bg-danger me-2">失敗: ${result.failed_requests}</span>
+            <span class="badge bg-primary">総数: ${result.total_requests}</span>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm table-striped">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>ステータス</th>
+                <th>レスポンス時間</th>
+                <th>URL</th>
+                <th>エラー</th>
+              </tr>
+            </thead>
+            <tbody>
+      `;
+
+      if (result.results && result.results.length > 0) {
+        result.results.forEach((req, index) => {
+          const httpResponse = req.http_response || {};
+          const isSuccess = !httpResponse.error;
+          const statusClass = isSuccess ? 'text-success' : 'text-danger';
+          const statusText = isSuccess ? 
+            `HTTP ${httpResponse.status_code || 'N/A'}` : 
+            'エラー';
+          
+          html += `
+            <tr>
+              <td>${index + 1}</td>
+              <td class="${statusClass}">
+                <i class="bi bi-${isSuccess ? 'check' : 'x'}"></i>
+                ${statusText}
+              </td>
+              <td>${httpResponse.elapsed_time ? httpResponse.elapsed_time.toFixed(3) + 's' : 'N/A'}</td>
+              <td>${httpResponse.url || 'N/A'}</td>
+              <td>${httpResponse.error || '-'}</td>
+            </tr>
+          `;
+        });
+      } else {
+        html += `
+          <tr>
+            <td colspan="5" class="text-center text-muted">
+              <i class="bi bi-info-circle"></i> 実行結果がありません
+            </td>
+          </tr>
+        `;
+      }
+
+      html += `
+            </tbody>
+          </table>
+        </div>
+        <div class="mt-3">
+          <a href="/history-page" class="btn btn-primary">
+            <i class="bi bi-clock-history"></i> 履歴ページで詳細を確認
+          </a>
+        </div>
+      `;
+
+      resultDiv.innerHTML = html;
     }
 
     // 初期化処理
