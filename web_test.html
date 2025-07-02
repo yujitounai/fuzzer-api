@@ -84,6 +84,18 @@
               <label for="placeholders" class="form-label">プレースホルダ（カンマ区切り）</label>
               <input id="placeholders" type="text" class="form-control" placeholder="例: id,name">
             </div>
+            <div class="mb-3">
+              <label class="form-label">例を読み込む:</label>
+              <div class="btn-group" role="group">
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="loadSniperExample()">Sniper</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="loadBatteringRamExample()">Battering Ram</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="loadPitchforkExample()">Pitchfork</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="loadClusterBombExample()">Cluster Bomb</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="loadPostFormExample()">POST Form</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="loadPostJsonExample()">POST JSON</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="loadPostMultipartExample()">POST Multipart</button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -252,6 +264,82 @@ test`);
 123456
 qwerty
 admin123`);
+    }
+
+    function loadPostFormExample() {
+      document.getElementById('strategy').value = 'sniper';
+      templateCodeMirror.setValue(`POST /api/login HTTP/1.1
+Host: example.com
+Content-Type: application/x-www-form-urlencoded
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+Accept-Language: ja,en-US;q=0.9,en;q=0.8
+Accept-Encoding: gzip, deflate, br
+Connection: keep-alive
+Content-Length: <<>>
+
+username=<<>>&password=<<>>&submit=Login`);
+      document.getElementById('placeholders').value = 'content_length,username,password';
+      
+      const payloadSets = document.getElementById('payload-sets');
+      payloadSets.innerHTML = '';
+      codeMirrors = [];
+      
+      createPayloadSet('login_credentials', `admin
+user123
+testuser`);
+    }
+
+    function loadPostJsonExample() {
+      document.getElementById('strategy').value = 'sniper';
+      templateCodeMirror.setValue(`POST /api/users HTTP/1.1
+Host: api.example.com
+Content-Type: application/json
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
+Accept: application/json
+Authorization: Bearer <<>>
+Content-Length: <<>>
+
+{"username": "<<>>", "email": "<<>>", "role": "user"}`);
+      document.getElementById('placeholders').value = 'auth_token,content_length,username,email';
+      
+      const payloadSets = document.getElementById('payload-sets');
+      payloadSets.innerHTML = '';
+      codeMirrors = [];
+      
+      createPayloadSet('user_data', `john_doe
+jane_smith
+admin_user`);
+    }
+
+    function loadPostMultipartExample() {
+      document.getElementById('strategy').value = 'sniper';
+      templateCodeMirror.setValue(`POST /api/upload HTTP/1.1
+Host: upload.example.com
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary<<>>
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
+Accept: application/json
+Content-Length: <<>>
+
+------WebKitFormBoundary<<>>
+Content-Disposition: form-data; name="file"; filename="<<>>"
+Content-Type: application/octet-stream
+
+<<>>
+------WebKitFormBoundary<<>>
+Content-Disposition: form-data; name="description"
+
+<<>>
+------WebKitFormBoundary<<>>--`);
+      document.getElementById('placeholders').value = 'boundary1,content_length,boundary2,filename,file_content,boundary3,description,boundary4';
+      
+      const payloadSets = document.getElementById('payload-sets');
+      payloadSets.innerHTML = '';
+      codeMirrors = [];
+      
+      createPayloadSet('file_upload', `test.txt
+document.pdf
+image.jpg`);
     }
 
     async function sendRequest() {
