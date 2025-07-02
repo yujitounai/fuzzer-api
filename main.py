@@ -8,16 +8,25 @@
 - Cluster Bomb: 全てのペイロードセットの組み合わせをテスト
 
 プレースホルダ形式: <<プレースホルダ名>> または <<>> (Sniper攻撃用)
+
+データベース機能:
+- リクエストと生成されたリクエストの永続化
+- 履歴の表示と管理
+- 統計情報の提供
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional, Union
 import itertools
 from enum import Enum
 import uvicorn
+from sqlalchemy.orm import Session
+
+# データベース関連のインポート
+from database import db_manager, FuzzerRequest, GeneratedRequest
 
 app = FastAPI(
     title="プレースホルダ置換API",
@@ -25,8 +34,20 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# データベーステーブルの作成
+db_manager.create_tables()
+
 # 静的ファイルを配信
 app.mount("/static", StaticFiles(directory="."), name="static")
+
+# データベースセッションの依存関係
+def get_db():
+    """データベースセッションを取得する依存関係"""
+    db = db_manager.SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 class AttackStrategy(str, Enum):
     SNIPER = "sniper"
@@ -60,9 +81,51 @@ class PlaceholderRequest(BaseModel):
     payload_sets: List[PayloadSet]
 
 class PlaceholderResponse(BaseModel):
+    """
+    プレースホルダ置換レスポンスの定義
+    
+    Attributes:
+        strategy (str): 使用された攻撃戦略
+        total_requests (int): 生成されたリクエストの総数
+        requests (List[Dict[str, Any]]): 生成されたリクエストのリスト
+        request_id (int): データベースに保存されたリクエストのID
+    """
     strategy: str
     total_requests: int
     requests: List[Dict[str, Any]]
+    request_id: Optional[int] = None
+
+class FuzzerRequestResponse(BaseModel):
+    """
+    ファザーリクエスト履歴のレスポンス定義
+    
+    Attributes:
+        id (int): リクエストのID
+        template (str): テンプレート文字列
+        placeholders (List[str]): プレースホルダ名のリスト
+        strategy (str): 攻撃戦略
+        total_requests (int): 生成されたリクエストの総数
+        created_at (str): 作成日時
+    """
+    id: int
+    template: str
+    placeholders: List[str]
+    strategy: str
+    total_requests: int
+    created_at: str
+
+class StatisticsResponse(BaseModel):
+    """
+    統計情報のレスポンス定義
+    
+    Attributes:
+        total_fuzzer_requests (int): 総ファザーリクエスト数
+        total_generated_requests (int): 総生成リクエスト数
+        strategy_distribution (Dict[str, int]): 戦略別の分布
+    """
+    total_fuzzer_requests: int
+    total_generated_requests: int
+    strategy_distribution: Dict[str, int]
 
 class FuzzerEngine:
     def __init__(self):
@@ -289,18 +352,20 @@ class FuzzerEngine:
 fuzzer = FuzzerEngine()
 
 @app.post("/replace-placeholders", response_model=PlaceholderResponse)
-async def replace_placeholders(request: PlaceholderRequest):
+async def replace_placeholders(request: PlaceholderRequest, db: Session = Depends(get_db)):
     """
     プレースホルダ置換APIエンドポイント
     
     指定された攻撃戦略に基づいてプレースホルダをペイロードで置換し、
-    生成されたリクエストのリストを返します。
+    生成されたリクエストのリストを返します。また、リクエストと生成された
+    リクエストをデータベースに永続化します。
     
     Args:
         request (PlaceholderRequest): 置換リクエスト
+        db (Session): データベースセッション
         
     Returns:
-        PlaceholderResponse: 攻撃戦略名、総リクエスト数、リクエストリストを含むレスポンス
+        PlaceholderResponse: 攻撃戦略名、総リクエスト数、リクエストリスト、リクエストIDを含むレスポンス
         
     Raises:
         HTTPException: 無効な攻撃戦略が指定された場合
@@ -318,10 +383,24 @@ async def replace_placeholders(request: PlaceholderRequest):
         else:
             raise HTTPException(status_code=400, detail=f"無効な攻撃戦略: {request.strategy}")
         
+        # ペイロードセットを辞書形式に変換
+        payload_sets_dict = [{"name": ps.name, "payloads": ps.payloads} for ps in request.payload_sets]
+        
+        # データベースに保存
+        fuzzer_request = db_manager.save_fuzzer_request(
+            db=db,
+            template=request.template,
+            placeholders=request.placeholders,
+            strategy=request.strategy.value,
+            payload_sets=payload_sets_dict,
+            generated_requests=requests
+        )
+        
         return PlaceholderResponse(
             strategy=request.strategy.value,
             total_requests=len(requests),
-            requests=requests
+            requests=requests,
+            request_id=fuzzer_request.id
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -342,8 +421,13 @@ async def root():
         "message": "プレースホルダ置換API",
         "version": "1.0.0",
         "endpoints": {
-            "POST /replace-placeholders": "プレースホルダ置換API",
+            "POST /replace-placeholders": "プレースホルダ置換API（データベースに保存）",
+            "GET /history": "ファザーリクエストの履歴取得",
+            "GET /history/{id}": "特定のファザーリクエストの詳細取得",
+            "DELETE /history/{id}": "特定のファザーリクエストの削除",
+            "GET /statistics": "データベース統計情報",
             "GET /test": "テスト用Webインターフェース",
+            "GET /history-page": "履歴表示用Webインターフェース",
             "GET /docs": "APIドキュメント"
         },
         "strategies": [
@@ -351,8 +435,122 @@ async def root():
             "battering_ram - 同じペイロードを全ての位置に同時に配置",
             "pitchfork - 各位置に異なるペイロードセットを使用し、同時に配置",
             "cluster_bomb - 全てのペイロードの組み合わせをテスト"
-        ]
+        ],
+        "database": {
+            "type": "SQLite",
+            "file": "fuzzer_requests.db",
+            "features": [
+                "リクエストと生成されたリクエストの永続化",
+                "履歴の表示と管理",
+                "統計情報の提供"
+            ]
+        }
     }
+
+@app.get("/history", response_model=List[FuzzerRequestResponse])
+async def get_history(db: Session = Depends(get_db), limit: int = 50, offset: int = 0):
+    """
+    ファザーリクエストの履歴を取得するエンドポイント
+    
+    Args:
+        db (Session): データベースセッション
+        limit (int): 取得件数の制限（デフォルト: 50）
+        offset (int): オフセット（デフォルト: 0）
+        
+    Returns:
+        List[FuzzerRequestResponse]: ファザーリクエストの履歴リスト
+    """
+    fuzzer_requests = db_manager.get_all_fuzzer_requests(db, limit=limit, offset=offset)
+    
+    history = []
+    for req in fuzzer_requests:
+        history.append(FuzzerRequestResponse(
+            id=req.id,
+            template=req.template,
+            placeholders=req.get_placeholders(),
+            strategy=req.strategy,
+            total_requests=req.total_requests,
+            created_at=req.created_at.isoformat() if req.created_at else ""
+        ))
+    
+    return history
+
+@app.get("/history/{request_id}", response_model=PlaceholderResponse)
+async def get_request_detail(request_id: int, db: Session = Depends(get_db)):
+    """
+    特定のファザーリクエストの詳細を取得するエンドポイント
+    
+    Args:
+        request_id (int): ファザーリクエストのID
+        db (Session): データベースセッション
+        
+    Returns:
+        PlaceholderResponse: ファザーリクエストの詳細
+        
+    Raises:
+        HTTPException: リクエストが見つからない場合
+    """
+    fuzzer_request = db_manager.get_fuzzer_request_by_id(db, request_id)
+    if not fuzzer_request:
+        raise HTTPException(status_code=404, detail="リクエストが見つかりません")
+    
+    # 生成されたリクエストを取得
+    generated_requests = []
+    for gen_req in fuzzer_request.generated_requests:
+        req_dict = {
+            "request": gen_req.request_content,
+            "placeholder": gen_req.placeholder,
+            "payload": gen_req.payload,
+            "position": gen_req.position
+        }
+        
+        # applied_toフィールドがある場合は追加
+        if gen_req.applied_to:
+            req_dict["applied_to"] = gen_req.get_applied_to()
+        
+        generated_requests.append(req_dict)
+    
+    return PlaceholderResponse(
+        strategy=fuzzer_request.strategy,
+        total_requests=fuzzer_request.total_requests,
+        requests=generated_requests,
+        request_id=fuzzer_request.id
+    )
+
+@app.delete("/history/{request_id}")
+async def delete_request(request_id: int, db: Session = Depends(get_db)):
+    """
+    特定のファザーリクエストを削除するエンドポイント
+    
+    Args:
+        request_id (int): ファザーリクエストのID
+        db (Session): データベースセッション
+        
+    Returns:
+        Dict[str, str]: 削除結果のメッセージ
+        
+    Raises:
+        HTTPException: リクエストが見つからない場合
+    """
+    success = db_manager.delete_fuzzer_request(db, request_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="リクエストが見つかりません")
+    
+    return {"message": f"リクエストID {request_id} を削除しました"}
+
+@app.get("/statistics", response_model=StatisticsResponse)
+async def get_statistics(db: Session = Depends(get_db)):
+    """
+    データベースの統計情報を取得するエンドポイント
+    
+    Args:
+        db (Session): データベースセッション
+        
+    Returns:
+        StatisticsResponse: 統計情報
+    """
+    stats = db_manager.get_statistics(db)
+    return StatisticsResponse(**stats)
 
 @app.get("/test", response_class=HTMLResponse)
 async def test_page():
@@ -369,6 +567,22 @@ async def test_page():
             return HTMLResponse(content=f.read())
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="テストページが見つかりません")
+
+@app.get("/history-page", response_class=HTMLResponse)
+async def history_page():
+    """
+    履歴表示用HTMLページを提供するエンドポイント
+    
+    ファザーリクエストの履歴と統計情報を表示するWebインターフェースを提供します。
+    
+    Returns:
+        HTMLResponse: 履歴表示用HTMLページ
+    """
+    try:
+        with open("history.html", "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="履歴ページが見つかりません")
 
 if __name__ == "__main__":
     # 開発サーバーを起動

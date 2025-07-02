@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ファザーリクエスト履歴 - プレースホルダ置換API</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .history-card {
+            transition: transform 0.2s;
+        }
+        .history-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .strategy-badge {
+            font-size: 0.8em;
+        }
+        .template-preview {
+            max-height: 100px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .loading {
+            display: none;
+        }
+        .stats-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .table-responsive {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <!-- ヘッダー -->
+        <div class="row bg-primary text-white p-3 mb-4">
+            <div class="col">
+                <h1><i class="fas fa-history"></i> ファザーリクエスト履歴</h1>
+                <p class="mb-0">プレースホルダ置換APIの実行履歴と統計情報</p>
+            </div>
+            <div class="col-auto">
+                <a href="/test" class="btn btn-light">
+                    <i class="fas fa-arrow-left"></i> テストページに戻る
+                </a>
+            </div>
+        </div>
+
+        <!-- 統計情報 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card stats-card">
+                    <div class="card-body">
+                        <h5 class="card-title"><i class="fas fa-chart-bar"></i> 統計情報</h5>
+                        <div class="row" id="statistics">
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <h3 id="total-requests">-</h3>
+                                    <p>総リクエスト数</p>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <h3 id="total-generated">-</h3>
+                                    <p>総生成リクエスト数</p>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div id="strategy-distribution">
+                                    <!-- 戦略別分布がここに表示されます -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- コントロール -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="input-group">
+                    <span class="input-group-text">表示件数</span>
+                    <select class="form-select" id="limit-select">
+                        <option value="10">10件</option>
+                        <option value="25">25件</option>
+                        <option value="50" selected>50件</option>
+                        <option value="100">100件</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="loadHistory()">
+                        <i class="fas fa-sync-alt"></i> 更新
+                    </button>
+                </div>
+            </div>
+            <div class="col-md-6 text-end">
+                <div class="btn-group" role="group">
+                    <button class="btn btn-outline-secondary" onclick="previousPage()">
+                        <i class="fas fa-chevron-left"></i> 前へ
+                    </button>
+                    <span class="btn btn-outline-secondary" id="page-info">ページ 1</span>
+                    <button class="btn btn-outline-secondary" onclick="nextPage()">
+                        次へ <i class="fas fa-chevron-right"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 履歴リスト -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="fas fa-list"></i> リクエスト履歴</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="loading text-center p-4" id="loading">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">読み込み中...</span>
+                            </div>
+                            <p class="mt-2">履歴を読み込み中...</p>
+                        </div>
+                        <div id="history-list">
+                            <!-- 履歴がここに表示されます -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 詳細モーダル -->
+        <div class="modal fade" id="detailModal" tabindex="-1">
+            <div class="modal-dialog modal-xl">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">リクエスト詳細</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div id="detail-content">
+                            <!-- 詳細内容がここに表示されます -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let currentPage = 0;
+        let currentLimit = 50;
+        let totalPages = 1;
+
+        // ページ読み込み時に初期データを取得
+        document.addEventListener('DOMContentLoaded', function() {
+            loadStatistics();
+            loadHistory();
+        });
+
+        // 統計情報を読み込み
+        async function loadStatistics() {
+            try {
+                const response = await fetch('/statistics');
+                const stats = await response.json();
+                
+                document.getElementById('total-requests').textContent = stats.total_fuzzer_requests;
+                document.getElementById('total-generated').textContent = stats.total_generated_requests;
+                
+                // 戦略別分布を表示
+                const distributionDiv = document.getElementById('strategy-distribution');
+                distributionDiv.innerHTML = '';
+                
+                for (const [strategy, count] of Object.entries(stats.strategy_distribution)) {
+                    const strategyName = getStrategyDisplayName(strategy);
+                    const percentage = stats.total_fuzzer_requests > 0 ? 
+                        Math.round((count / stats.total_fuzzer_requests) * 100) : 0;
+                    
+                    distributionDiv.innerHTML += `
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span>${strategyName}</span>
+                            <span>${count} (${percentage}%)</span>
+                        </div>
+                        <div class="progress mb-2" style="height: 8px;">
+                            <div class="progress-bar" style="width: ${percentage}%"></div>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('統計情報の取得に失敗しました:', error);
+            }
+        }
+
+        // 履歴を読み込み
+        async function loadHistory() {
+            const loading = document.getElementById('loading');
+            const historyList = document.getElementById('history-list');
+            
+            loading.style.display = 'block';
+            historyList.innerHTML = '';
+            
+            try {
+                const response = await fetch(`/history?limit=${currentLimit}&offset=${currentPage * currentLimit}`);
+                const history = await response.json();
+                
+                if (history.length === 0) {
+                    historyList.innerHTML = `
+                        <div class="text-center p-4">
+                            <i class="fas fa-inbox fa-3x text-muted mb-3"></i>
+                            <h5>履歴がありません</h5>
+                            <p class="text-muted">まだリクエストが実行されていません。</p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                history.forEach(item => {
+                    const card = createHistoryCard(item);
+                    historyList.appendChild(card);
+                });
+                
+                updatePagination();
+            } catch (error) {
+                console.error('履歴の取得に失敗しました:', error);
+                historyList.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-triangle"></i> 履歴の取得に失敗しました。
+                    </div>
+                `;
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        // 履歴カードを作成
+        function createHistoryCard(item) {
+            const card = document.createElement('div');
+            card.className = 'col-md-6 col-lg-4 mb-3';
+            
+            const strategyName = getStrategyDisplayName(item.strategy);
+            const strategyColor = getStrategyColor(item.strategy);
+            const createdDate = new Date(item.created_at).toLocaleString('ja-JP');
+            
+            card.innerHTML = `
+                <div class="card history-card h-100">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span class="badge ${strategyColor} strategy-badge">${strategyName}</span>
+                        <small class="text-muted">#${item.id}</small>
+                    </div>
+                    <div class="card-body">
+                        <h6 class="card-title">テンプレート</h6>
+                        <div class="template-preview text-muted mb-2">${escapeHtml(item.template)}</div>
+                        
+                        <div class="row mb-2">
+                            <div class="col-6">
+                                <small class="text-muted">プレースホルダ:</small><br>
+                                <span class="badge bg-secondary">${item.placeholders.length}個</span>
+                            </div>
+                            <div class="col-6">
+                                <small class="text-muted">生成数:</small><br>
+                                <span class="badge bg-info">${item.total_requests}件</span>
+                            </div>
+                        </div>
+                        
+                        <small class="text-muted">
+                            <i class="fas fa-clock"></i> ${createdDate}
+                        </small>
+                    </div>
+                    <div class="card-footer">
+                        <div class="btn-group w-100" role="group">
+                            <button class="btn btn-outline-primary btn-sm" onclick="showDetail(${item.id})">
+                                <i class="fas fa-eye"></i> 詳細
+                            </button>
+                            <button class="btn btn-outline-danger btn-sm" onclick="deleteRequest(${item.id})">
+                                <i class="fas fa-trash"></i> 削除
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            return card;
+        }
+
+        // 詳細を表示
+        async function showDetail(requestId) {
+            try {
+                const response = await fetch(`/history/${requestId}`);
+                const detail = await response.json();
+                
+                const detailContent = document.getElementById('detail-content');
+                detailContent.innerHTML = `
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h6>基本情報</h6>
+                            <table class="table table-sm">
+                                <tr><td>ID:</td><td>${detail.request_id}</td></tr>
+                                <tr><td>戦略:</td><td><span class="badge ${getStrategyColor(detail.strategy)}">${getStrategyDisplayName(detail.strategy)}</span></td></tr>
+                                <tr><td>生成数:</td><td>${detail.total_requests}件</td></tr>
+                            </table>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>テンプレート</h6>
+                            <pre class="bg-light p-2 rounded"><code>${escapeHtml(detail.requests[0]?.request || 'N/A')}</code></pre>
+                        </div>
+                    </div>
+                    
+                    <h6>生成されたリクエスト (${detail.requests.length}件)</h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>リクエスト内容</th>
+                                    <th>プレースホルダ</th>
+                                    <th>ペイロード</th>
+                                    <th>位置</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${detail.requests.map((req, index) => `
+                                    <tr>
+                                        <td>${index + 1}</td>
+                                        <td><pre class="mb-0"><code>${escapeHtml(req.request)}</code></pre></td>
+                                        <td>${req.placeholder || '-'}</td>
+                                        <td>${req.payload || '-'}</td>
+                                        <td>${req.position || '-'}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+                
+                const modal = new bootstrap.Modal(document.getElementById('detailModal'));
+                modal.show();
+            } catch (error) {
+                console.error('詳細の取得に失敗しました:', error);
+                alert('詳細の取得に失敗しました。');
+            }
+        }
+
+        // リクエストを削除
+        async function deleteRequest(requestId) {
+            if (!confirm(`リクエストID ${requestId} を削除しますか？`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/history/${requestId}`, {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok) {
+                    alert('リクエストを削除しました。');
+                    loadStatistics();
+                    loadHistory();
+                } else {
+                    const error = await response.json();
+                    alert(`削除に失敗しました: ${error.detail}`);
+                }
+            } catch (error) {
+                console.error('削除に失敗しました:', error);
+                alert('削除に失敗しました。');
+            }
+        }
+
+        // ページネーション
+        function previousPage() {
+            if (currentPage > 0) {
+                currentPage--;
+                loadHistory();
+            }
+        }
+
+        function nextPage() {
+            if (currentPage < totalPages - 1) {
+                currentPage++;
+                loadHistory();
+            }
+        }
+
+        function updatePagination() {
+            document.getElementById('page-info').textContent = `ページ ${currentPage + 1}`;
+        }
+
+        // 表示件数変更
+        document.getElementById('limit-select').addEventListener('change', function() {
+            currentLimit = parseInt(this.value);
+            currentPage = 0;
+            loadHistory();
+        });
+
+        // ユーティリティ関数
+        function getStrategyDisplayName(strategy) {
+            const names = {
+                'sniper': 'Sniper',
+                'battering_ram': 'Battering Ram',
+                'pitchfork': 'Pitchfork',
+                'cluster_bomb': 'Cluster Bomb'
+            };
+            return names[strategy] || strategy;
+        }
+
+        function getStrategyColor(strategy) {
+            const colors = {
+                'sniper': 'bg-primary',
+                'battering_ram': 'bg-success',
+                'pitchfork': 'bg-warning',
+                'cluster_bomb': 'bg-danger'
+            };
+            return colors[strategy] || 'bg-secondary';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html> 
