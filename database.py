@@ -95,6 +95,66 @@ class GeneratedRequest(Base):
         """保存された適用プレースホルダリストを取得"""
         return json.loads(self.applied_to) if self.applied_to else []
 
+class Job(Base):
+    """
+    ジョブ情報のテーブル
+    
+    このテーブルは、HTTPリクエスト実行ジョブの基本情報を保存します。
+    各ジョブは複数の実行結果を持つことができます。
+    """
+    __tablename__ = "jobs"
+    
+    id = Column(String(36), primary_key=True, index=True, comment="ジョブの一意識別子（UUID）")
+    name = Column(String(255), nullable=False, comment="ジョブ名")
+    status = Column(String(20), nullable=False, comment="ジョブの状態（pending, running, completed, failed, cancelled）")
+    fuzzer_request_id = Column(Integer, ForeignKey("fuzzer_requests.id"), nullable=False, comment="関連するファザーリクエストのID")
+    http_config = Column(JSON, nullable=True, comment="HTTP設定（JSON形式）")
+    progress = Column(JSON, nullable=False, comment="進捗情報（JSON形式）")
+    error_message = Column(Text, nullable=True, comment="エラーメッセージ")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="作成日時")
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), comment="最終更新日時")
+    
+    # リレーションシップ: このジョブの実行結果のリスト
+    results = relationship("JobResult", back_populates="job", cascade="all, delete-orphan")
+    
+    def set_progress(self, progress: dict):
+        """進捗情報をJSON形式で保存"""
+        self.progress = json.dumps(progress, ensure_ascii=False)
+    
+    def get_progress(self) -> dict:
+        """保存された進捗情報を取得"""
+        return json.loads(self.progress) if self.progress else {}
+
+class JobResult(Base):
+    """
+    ジョブ実行結果のテーブル
+    
+    このテーブルは、各ジョブの実行結果の詳細を保存します。
+    各実行結果は、元のジョブに関連付けられます。
+    """
+    __tablename__ = "job_results"
+    
+    id = Column(Integer, primary_key=True, index=True, comment="実行結果の一意識別子")
+    job_id = Column(String(36), ForeignKey("jobs.id"), nullable=False, comment="元のジョブのID")
+    request_number = Column(Integer, nullable=False, comment="リクエスト番号（順序）")
+    request_content = Column(Text, nullable=False, comment="実行したリクエストの内容")
+    http_response = Column(JSON, nullable=True, comment="HTTPレスポンス（JSON形式）")
+    success = Column(Integer, nullable=False, default=0, comment="成功フラグ（0: 失敗, 1: 成功）")
+    error_message = Column(Text, nullable=True, comment="エラーメッセージ")
+    elapsed_time = Column(Integer, nullable=True, comment="実行時間（ミリ秒）")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="実行日時")
+    
+    # リレーションシップ: 元のジョブ
+    job = relationship("Job", back_populates="results")
+    
+    def set_http_response(self, http_response: dict):
+        """HTTPレスポンスをJSON形式で保存"""
+        self.http_response = json.dumps(http_response, ensure_ascii=False) if http_response else None
+    
+    def get_http_response(self) -> dict:
+        """保存されたHTTPレスポンスを取得"""
+        return json.loads(self.http_response) if self.http_response else {}
+
 class DatabaseManager:
     """
     データベース操作を管理するクラス
@@ -239,6 +299,220 @@ class DatabaseManager:
             "total_fuzzer_requests": total_requests,
             "total_generated_requests": total_generated,
             "strategy_distribution": strategy_stats
+        }
+    
+    # ジョブ関連の操作メソッド
+    def save_job(self, db, job_id: str, name: str, status: str, fuzzer_request_id: int, 
+                 http_config: Optional[dict] = None, progress: Optional[dict] = None, 
+                 error_message: Optional[str] = None) -> Job:
+        """
+        ジョブを保存
+        
+        Args:
+            db: データベースセッション
+            job_id (str): ジョブID
+            name (str): ジョブ名
+            status (str): ジョブの状態
+            fuzzer_request_id (int): 関連するファザーリクエストのID
+            http_config (Optional[dict]): HTTP設定
+            progress (Optional[dict]): 進捗情報
+            error_message (Optional[str]): エラーメッセージ
+            
+        Returns:
+            Job: 保存されたジョブオブジェクト
+        """
+        job = Job(
+            id=job_id,
+            name=name,
+            status=status,
+            fuzzer_request_id=fuzzer_request_id,
+            http_config=http_config,
+            error_message=error_message
+        )
+        
+        if progress:
+            job.set_progress(progress)
+        else:
+            job.set_progress({})
+        
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+        return job
+    
+    def get_all_jobs(self, db) -> List[Job]:
+        """
+        全てのジョブを取得
+        
+        Args:
+            db: データベースセッション
+            
+        Returns:
+            List[Job]: ジョブのリスト
+        """
+        return db.query(Job).order_by(Job.created_at.desc()).all()
+    
+    def get_job_by_id(self, db, job_id: str) -> Optional[Job]:
+        """
+        指定されたIDのジョブを取得
+        
+        Args:
+            db: データベースセッション
+            job_id (str): ジョブID
+            
+        Returns:
+            Optional[Job]: ジョブオブジェクト（見つからない場合はNone）
+        """
+        return db.query(Job).filter(Job.id == job_id).first()
+    
+    def update_job(self, db, job_id: str, status: Optional[str] = None, 
+                   progress: Optional[dict] = None, error_message: Optional[str] = None) -> bool:
+        """
+        ジョブを更新
+        
+        Args:
+            db: データベースセッション
+            job_id (str): ジョブID
+            status (Optional[str]): 新しい状態
+            progress (Optional[dict]): 新しい進捗情報
+            error_message (Optional[str]): エラーメッセージ
+            
+        Returns:
+            bool: 更新が成功した場合はTrue
+        """
+        job = db.query(Job).filter(Job.id == job_id).first()
+        if not job:
+            return False
+        
+        if status is not None:
+            job.status = status
+        if progress is not None:
+            job.set_progress(progress)
+        if error_message is not None:
+            job.error_message = error_message
+        
+        job.updated_at = datetime.now()
+        db.commit()
+        return True
+    
+    def delete_job(self, db, job_id: str) -> bool:
+        """
+        指定されたIDのジョブを削除
+        
+        Args:
+            db: データベースセッション
+            job_id (str): ジョブID
+            
+        Returns:
+            bool: 削除が成功した場合はTrue
+        """
+        job = db.query(Job).filter(Job.id == job_id).first()
+        if job:
+            db.delete(job)
+            db.commit()
+            return True
+        return False
+    
+    def save_job_results(self, db, job_id: str, results: List[dict]) -> List[JobResult]:
+        """
+        ジョブの実行結果を保存
+        
+        Args:
+            db: データベースセッション
+            job_id (str): ジョブID
+            results (List[dict]): 実行結果のリスト
+            
+        Returns:
+            List[JobResult]: 保存された実行結果のリスト
+        """
+        job_results = []
+        
+        for i, result in enumerate(results):
+            http_response = result.get('http_response', {})
+            is_success = not http_response.get('error')
+            
+            job_result = JobResult(
+                job_id=job_id,
+                request_number=i + 1,
+                request_content=result.get('request', ''),
+                success=1 if is_success else 0,
+                error_message=http_response.get('error'),
+                elapsed_time=int(http_response.get('elapsed_time', 0) * 1000) if http_response.get('elapsed_time') else None
+            )
+            
+            if http_response:
+                job_result.set_http_response(http_response)
+            
+            db.add(job_result)
+            job_results.append(job_result)
+        
+        db.commit()
+        return job_results
+    
+    def get_job_results(self, db, job_id: str) -> List[dict]:
+        """
+        ジョブの実行結果を取得
+        
+        Args:
+            db: データベースセッション
+            job_id (str): ジョブID
+            
+        Returns:
+            List[dict]: 実行結果のリスト
+        """
+        job_results = db.query(JobResult).filter(JobResult.job_id == job_id).order_by(JobResult.request_number).all()
+        
+        results = []
+        for job_result in job_results:
+            result = {
+                'request': job_result.request_content,
+                'http_response': job_result.get_http_response()
+            }
+            results.append(result)
+        
+        return results
+    
+    def get_job_statistics(self, db) -> dict:
+        """
+        ジョブの統計情報を取得
+        
+        Args:
+            db: データベースセッション
+            
+        Returns:
+            dict: ジョブ統計情報
+        """
+        total_jobs = db.query(Job).count()
+        
+        # 状態別の統計
+        status_counts = {}
+        for status in ["pending", "running", "completed", "failed", "cancelled"]:
+            count = db.query(Job).filter(Job.status == status).count()
+            status_counts[status] = count
+        
+        # 総リクエスト数と平均実行時間
+        total_requests = 0
+        total_execution_time = 0
+        completed_jobs = 0
+        
+        for job in db.query(Job).filter(Job.status == "completed").all():
+            progress = job.get_progress()
+            total_requests += progress.get('total_requests', 0)
+            
+            if job.created_at and job.updated_at:
+                execution_time = (job.updated_at - job.created_at).total_seconds()
+                total_execution_time += execution_time
+                completed_jobs += 1
+        
+        avg_execution_time = total_execution_time / completed_jobs if completed_jobs > 0 else 0
+        
+        return {
+            "total_jobs": total_jobs,
+            "completed_jobs": status_counts.get("completed", 0),
+            "running_jobs": status_counts.get("running", 0),
+            "failed_jobs": status_counts.get("failed", 0),
+            "total_requests": total_requests,
+            "avg_execution_time": avg_execution_time
         }
 
 # グローバルなデータベースマネージャーインスタンス

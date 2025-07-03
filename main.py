@@ -27,7 +27,7 @@ import asyncio
 from sqlalchemy.orm import Session
 
 # データベース関連のインポート
-from database import db_manager, FuzzerRequest, GeneratedRequest
+from database import db_manager, FuzzerRequest, GeneratedRequest, Job as DBJob, JobResult as DBJobResult
 
 # HTTPリクエスト送信関連のインポート
 from http_client import RequestExecutor, HTTPRequestConfig
@@ -1100,12 +1100,13 @@ async def get_jobs():
     )
 
 @app.get("/api/jobs/{job_id}", response_model=JobStatusResponseModel)
-async def get_job_status(job_id: str):
+async def get_job_status(job_id: str, db: Session = Depends(get_db)):
     """
     ジョブの状態を取得するエンドポイント
     
     Args:
         job_id (str): ジョブのID
+        db: データベースセッション
         
     Returns:
         JobStatusResponseModel: ジョブの状態
@@ -1113,15 +1114,51 @@ async def get_job_status(job_id: str):
     Raises:
         HTTPException: ジョブが見つからない場合
     """
+    # メモリ内のジョブを取得
     job = job_manager.get_job(job_id)
     if not job:
-        raise HTTPException(status_code=404, detail="ジョブが見つかりません")
+        # データベースからも確認
+        db_job = db_manager.get_job_by_id(db, job_id)
+        if not db_job:
+            raise HTTPException(status_code=404, detail="ジョブが見つかりません")
+        
+        # データベースのジョブをメモリ内のJobオブジェクトに変換
+        progress = job_manager.JobProgress(**db_job.get_progress())
+        job = job_manager.Job(
+            id=db_job.id,
+            name=db_job.name,
+            status=job_manager.JobStatus(db_job.status),
+            progress=progress,
+            created_at=db_job.created_at,
+            updated_at=db_job.updated_at,
+            request_id=db_job.fuzzer_request_id,
+            http_config=db_job.http_config,
+            results=[],
+            error_message=db_job.error_message
+        )
+    
+    # データベースから実行結果を取得
+    results = []
+    try:
+        db_results = db.query(DBJobResult).filter(DBJobResult.job_id == job_id).order_by(DBJobResult.request_number).all()
+        for db_result in db_results:
+            result = {
+                'request': {
+                    'request': db_result.request_content
+                },
+                'http_response': db_result.get_http_response()
+            }
+            results.append(result)
+    except Exception as e:
+        print(f"実行結果取得エラー: {e}")
+        # メモリ内の結果を使用
+        results = job.results or []
     
     return JobStatusResponseModel(
         job_id=job.id,
         status=job.status.value,
         progress=job.progress.to_dict(),
-        results=job.results,
+        results=results,
         error_message=job.error_message
     )
 
@@ -1244,6 +1281,9 @@ async def history_page():
         raise HTTPException(status_code=404, detail="履歴ページが見つかりません")
 
 if __name__ == "__main__":
+    # データベーステーブルを作成
+    db_manager.create_tables()
+    
     # 開発サーバーを起動
     # host="0.0.0.0" で全てのインターフェースからアクセス可能
     # port=8000 でポート8000を使用

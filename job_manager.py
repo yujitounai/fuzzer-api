@@ -15,6 +15,10 @@ import threading
 from dataclasses import dataclass, asdict
 import json
 
+# データベース関連のインポート
+from database import db_manager, Job as DBJob, JobResult as DBJobResult
+from sqlalchemy.orm import Session
+
 
 class JobStatus(str, Enum):
     """ジョブの状態を表す列挙型"""
@@ -106,6 +110,13 @@ class JobManager:
         self._executor = None
         self._max_concurrent_jobs = 5
         self._active_jobs = 0
+        self._db_session: Optional[Session] = None
+    
+    def _get_db_session(self) -> Session:
+        """データベースセッションを取得"""
+        if self._db_session is None:
+            self._db_session = db_manager.SessionLocal()
+        return self._db_session
     
     def create_job(self, name: str, request_id: int, total_requests: int, 
                    http_config: Optional[Dict[str, Any]] = None) -> str:
@@ -133,17 +144,101 @@ class JobManager:
         with self._lock:
             self._jobs[job_id] = job
         
+        # データベースにも保存
+        try:
+            db = self._get_db_session()
+            db_manager.save_job(
+                db=db,
+                job_id=job_id,
+                name=name,
+                status=JobStatus.PENDING.value,
+                fuzzer_request_id=request_id,
+                http_config=http_config,
+                progress=progress.to_dict()
+            )
+        except Exception as e:
+            print(f"データベース保存エラー: {e}")
+        
         return job_id
     
     def get_job(self, job_id: str) -> Optional[Job]:
         """ジョブを取得"""
         with self._lock:
-            return self._jobs.get(job_id)
+            job = self._jobs.get(job_id)
+            if job:
+                print(f"ジョブ {job_id}: メモリから取得 - 結果数: {len(job.results) if job.results else 0}")
+                
+                # データベースから実行結果を取得
+                try:
+                    db = self._get_db_session()
+                    results = db_manager.get_job_results(db=db, job_id=job_id)
+                    if results:
+                        print(f"ジョブ {job_id}: データベースから結果を取得 - 結果数: {len(results)}")
+                        job.results = results
+                    else:
+                        print(f"ジョブ {job_id}: データベースに結果が見つかりません")
+                except Exception as e:
+                    print(f"データベース取得エラー: {e}")
+            else:
+                print(f"ジョブ {job_id}: メモリにジョブが見つかりません")
+            
+            return job
     
     def get_all_jobs(self) -> List[Job]:
         """全てのジョブを取得"""
         with self._lock:
-            return list(self._jobs.values())
+            # メモリ内のジョブを取得
+            memory_jobs = list(self._jobs.values())
+        
+        # データベースからも取得
+        try:
+            db = self._get_db_session()
+            db_jobs = db_manager.get_all_jobs(db)
+            
+            # データベースのジョブをメモリ内のジョブとマージ
+            db_job_ids = {job.id for job in db_jobs}
+            memory_job_ids = {job.id for job in memory_jobs}
+            
+            # データベースにあってメモリにないジョブを復元
+            for db_job in db_jobs:
+                if db_job.id not in memory_job_ids:
+                    # データベースのジョブをメモリ内のJobオブジェクトに変換
+                    progress = JobProgress(**db_job.get_progress())
+                    job = Job(
+                        id=db_job.id,
+                        name=db_job.name,
+                        status=JobStatus(db_job.status),
+                        progress=progress,
+                        created_at=db_job.created_at,
+                        updated_at=db_job.updated_at,
+                        request_id=db_job.fuzzer_request_id,
+                        http_config=db_job.http_config,
+                        results=[],
+                        error_message=db_job.error_message
+                    )
+                    memory_jobs.append(job)
+            
+            # メモリにあってデータベースにないジョブをデータベースに保存
+            for memory_job in memory_jobs:
+                if memory_job.id not in db_job_ids:
+                    try:
+                        db_manager.save_job(
+                            db=db,
+                            job_id=memory_job.id,
+                            name=memory_job.name,
+                            status=memory_job.status.value,
+                            fuzzer_request_id=memory_job.request_id,
+                            http_config=memory_job.http_config,
+                            progress=memory_job.progress.to_dict(),
+                            error_message=memory_job.error_message
+                        )
+                    except Exception as e:
+                        print(f"データベース保存エラー: {e}")
+                        
+        except Exception as e:
+            print(f"データベース取得エラー: {e}")
+        
+        return memory_jobs
     
     def update_job_progress(self, job_id: str, completed: int, successful: int, 
                            failed: int, current: int = None) -> bool:
@@ -168,14 +263,29 @@ class JobManager:
                     job.progress.estimated_remaining_time = remaining / rate
             
             job.updated_at = datetime.now()
-            return True
+        
+        # データベースも更新
+        try:
+            db = self._get_db_session()
+            db_manager.update_job(
+                db=db,
+                job_id=job_id,
+                progress=job.progress.to_dict()
+            )
+        except Exception as e:
+            print(f"データベース更新エラー: {e}")
+        
+        return True
     
     def complete_job(self, job_id: str, results: List[Dict[str, Any]], 
                      error_message: Optional[str] = None) -> bool:
         """ジョブを完了"""
+        print(f"ジョブ {job_id}: complete_job呼び出し - 結果数: {len(results) if results else 0}")
+        
         with self._lock:
             job = self._jobs.get(job_id)
             if not job:
+                print(f"ジョブ {job_id}: ジョブが見つかりません")
                 return False
             
             job.status = JobStatus.FAILED if error_message else JobStatus.COMPLETED
@@ -183,7 +293,31 @@ class JobManager:
             job.results = results
             job.error_message = error_message
             job.updated_at = datetime.now()
-            return True
+            
+            print(f"ジョブ {job_id}: メモリに結果を保存 - 結果数: {len(results) if results else 0}")
+        
+        # データベースも更新
+        try:
+            db = self._get_db_session()
+            db_manager.update_job(
+                db=db,
+                job_id=job_id,
+                status=job.status.value,
+                progress=job.progress.to_dict(),
+                error_message=error_message
+            )
+            
+            # 実行結果も保存
+            if results:
+                print(f"ジョブ {job_id}: データベースに結果を保存 - 結果数: {len(results)}")
+                db_manager.save_job_results(db=db, job_id=job_id, results=results)
+            else:
+                print(f"ジョブ {job_id}: 結果が空のためデータベース保存をスキップ")
+                
+        except Exception as e:
+            print(f"データベース更新エラー: {e}")
+        
+        return True
     
     def cancel_job(self, job_id: str) -> bool:
         """ジョブをキャンセル"""
@@ -247,12 +381,19 @@ class JobManager:
                 config.verify_ssl = http_config.get('verify_ssl', True)
                 config.headers = http_config.get('additional_headers')
             
+            print(f"ジョブ {job_id}: リクエスト実行開始 - {len(requests)}件のリクエスト")
+            
             # リクエストを実行
             results = await RequestExecutor.execute_requests(requests, config)
+            
+            print(f"ジョブ {job_id}: リクエスト実行完了 - 結果数: {len(results)}")
+            print(f"ジョブ {job_id}: 結果の詳細: {results[:2]}...")  # 最初の2件を表示
             
             # 成功・失敗をカウント
             successful = sum(1 for r in results if not r.get('http_response', {}).get('error'))
             failed = len(results) - successful
+            
+            print(f"ジョブ {job_id}: 成功={successful}, 失敗={failed}")
             
             # 進捗を更新
             self.update_job_progress(job_id, len(results), successful, failed)
@@ -261,6 +402,7 @@ class JobManager:
             self.complete_job(job_id, results)
             
         except Exception as e:
+            print(f"ジョブ {job_id}: エラー発生 - {e}")
             # エラーでジョブ終了
             self.complete_job(job_id, [], str(e))
     
@@ -274,7 +416,28 @@ class JobManager:
             
             for job in self._jobs.values():
                 status_counts[job.status.value] += 1
+        
+        # データベースからも統計情報を取得
+        try:
+            db = self._get_db_session()
+            db_stats = db_manager.get_job_statistics(db)
             
+            # データベースの統計情報を優先
+            return {
+                'total_jobs': db_stats['total_jobs'],
+                'status_distribution': {
+                    'pending': db_stats.get('pending_jobs', 0),
+                    'running': db_stats.get('running_jobs', 0),
+                    'completed': db_stats.get('completed_jobs', 0),
+                    'failed': db_stats.get('failed_jobs', 0),
+                    'cancelled': 0  # データベース統計に含まれていない場合
+                },
+                'active_jobs': self._active_jobs,
+                'total_requests': db_stats.get('total_requests', 0),
+                'avg_execution_time': db_stats.get('avg_execution_time', 0)
+            }
+        except Exception as e:
+            print(f"データベース統計取得エラー: {e}")
             return {
                 'total_jobs': total_jobs,
                 'status_distribution': status_counts,

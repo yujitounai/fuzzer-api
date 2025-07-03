@@ -379,6 +379,46 @@
             loadStatistics();
             loadHistory();
             loadJobs();
+            
+            // 実行設定モーダルのイベントリスナーを設定
+            const executeModal = document.getElementById('executeModal');
+            executeModal.addEventListener('hidden.bs.modal', function() {
+                // Bootstrapのモーダルバックドロップを削除
+                const backdrop = document.querySelector('.modal-backdrop');
+                if (backdrop) {
+                    backdrop.remove();
+                }
+                
+                // bodyからmodal-openクラスを削除
+                document.body.classList.remove('modal-open');
+                
+                // 親画面のdisable状態を解除
+                document.body.style.pointerEvents = '';
+                document.body.style.opacity = '';
+                
+                // 個別実行モードをリセット
+                window.singleExecutionMode = null;
+            });
+            
+            // 結果モーダルのイベントリスナーを設定
+            const resultModal = document.getElementById('resultModal');
+            resultModal.addEventListener('hidden.bs.modal', function() {
+                // Bootstrapのモーダルバックドロップを削除
+                const backdrop = document.querySelector('.modal-backdrop');
+                if (backdrop) {
+                    backdrop.remove();
+                }
+                
+                // bodyからmodal-openクラスを削除
+                document.body.classList.remove('modal-open');
+                
+                // 親画面のdisable状態を解除
+                document.body.style.pointerEvents = '';
+                document.body.style.opacity = '';
+                
+                // 個別実行モードをリセット
+                window.singleExecutionMode = null;
+            });
         });
 
         // 統計情報を読み込み
@@ -716,6 +756,26 @@
                 </div>
             `;
             resultModal.show();
+            
+            // モーダルが閉じられた際に親画面のdisable状態を解除
+            const resultModalElement = document.getElementById('resultModal');
+            resultModalElement.addEventListener('hidden.bs.modal', function() {
+                // Bootstrapのモーダルバックドロップを削除
+                const backdrop = document.querySelector('.modal-backdrop');
+                if (backdrop) {
+                    backdrop.remove();
+                }
+                
+                // bodyからmodal-openクラスを削除
+                document.body.classList.remove('modal-open');
+                
+                // 親画面のdisable状態を解除
+                document.body.style.pointerEvents = '';
+                document.body.style.opacity = '';
+                
+                // 個別実行モードをリセット
+                window.singleExecutionMode = null;
+            }, { once: true }); // once: trueで一度だけ実行
 
             const pollInterval = setInterval(async () => {
                 attempts++;
@@ -742,9 +802,9 @@
                         
                         if (job.status === 'completed') {
                             showExecutionResults({
-                                total_requests: job.total_requests,
-                                successful_requests: job.successful_requests,
-                                failed_requests: job.failed_requests,
+                                total_requests: job.progress.total_requests,
+                                successful_requests: job.progress.successful_requests,
+                                failed_requests: job.progress.failed_requests,
                                 results: job.results || []
                             });
                         } else {
@@ -862,6 +922,21 @@
             // モーダルが閉じられたら要素を削除
             modal.addEventListener('hidden.bs.modal', function() {
                 document.body.removeChild(modal);
+                
+                // Bootstrapのモーダルバックドロップを削除
+                const backdrop = document.querySelector('.modal-backdrop');
+                if (backdrop) {
+                    backdrop.remove();
+                }
+                
+                // bodyからmodal-openクラスを削除
+                document.body.classList.remove('modal-open');
+                
+                // 親画面のdisable状態を解除
+                document.body.style.pointerEvents = '';
+                document.body.style.opacity = '';
+                // 個別実行モードをリセット
+                window.singleExecutionMode = null;
             });
         }
 
@@ -937,6 +1012,26 @@
             // 結果モーダルを表示
             const resultModal = new bootstrap.Modal(document.getElementById('resultModal'));
             resultModal.show();
+            
+            // モーダルが閉じられた際に親画面のdisable状態を解除
+            const resultModalElement = document.getElementById('resultModal');
+            resultModalElement.addEventListener('hidden.bs.modal', function() {
+                // Bootstrapのモーダルバックドロップを削除
+                const backdrop = document.querySelector('.modal-backdrop');
+                if (backdrop) {
+                    backdrop.remove();
+                }
+                
+                // bodyからmodal-openクラスを削除
+                document.body.classList.remove('modal-open');
+                
+                // 親画面のdisable状態を解除
+                document.body.style.pointerEvents = '';
+                document.body.style.opacity = '';
+                
+                // 個別実行モードをリセット
+                window.singleExecutionMode = null;
+            }, { once: true }); // once: trueで一度だけ実行
         }
 
         // レスポンス詳細を表示
@@ -992,6 +1087,15 @@
             // モーダルが閉じられたら要素を削除
             modal.addEventListener('hidden.bs.modal', function() {
                 document.body.removeChild(modal);
+                
+                // Bootstrapのモーダルバックドロップを削除
+                const backdrop = document.querySelector('.modal-backdrop');
+                if (backdrop) {
+                    backdrop.remove();
+                }
+                
+                // bodyからmodal-openクラスを削除
+                document.body.classList.remove('modal-open');
             });
         }
 
@@ -1087,9 +1191,12 @@
             
             try {
                 const response = await fetch('/api/jobs');
-                const jobs = await response.json();
+                const data = await response.json();
                 
-                if (jobs.length === 0) {
+                // APIレスポンスの形式を確認して適切に処理
+                const jobs = data.jobs || data;
+                
+                if (!Array.isArray(jobs) || jobs.length === 0) {
                     jobsList.innerHTML = `
                         <div class="text-center p-4">
                             <i class="fas fa-tasks fa-3x text-muted mb-3"></i>
@@ -1119,25 +1226,26 @@
                                 ${jobs.map(job => {
                                     const statusClass = getJobStatusClass(job.status);
                                     const statusText = getJobStatusText(job.status);
-                                    const startTime = new Date(job.start_time).toLocaleString('ja-JP');
-                                    const endTime = job.end_time ? new Date(job.end_time).toLocaleString('ja-JP') : '-';
+                                    const startTime = new Date(job.progress?.start_time || job.created_at).toLocaleString('ja-JP');
+                                    const endTime = job.progress?.end_time ? new Date(job.progress.end_time).toLocaleString('ja-JP') : '-';
+                                    const jobId = job.id || job.job_id;
                                     
                                     return `
                                         <tr>
-                                            <td><code>${job.job_id.substring(0, 8)}...</code></td>
+                                            <td><code>${jobId ? jobId.substring(0, 8) + '...' : 'N/A'}</code></td>
                                             <td><span class="badge ${statusClass}">${statusText}</span></td>
-                                            <td>${job.total_requests}</td>
-                                            <td class="text-success">${job.successful_requests}</td>
-                                            <td class="text-danger">${job.failed_requests}</td>
+                                            <td>${job.progress?.total_requests || 0}</td>
+                                            <td class="text-success">${job.progress?.successful_requests || 0}</td>
+                                            <td class="text-danger">${job.progress?.failed_requests || 0}</td>
                                             <td>${startTime}</td>
                                             <td>${endTime}</td>
                                             <td>
                                                 <div class="btn-group btn-group-sm" role="group">
-                                                    <button class="btn btn-outline-primary" onclick="showJobDetail('${job.job_id}')">
+                                                    <button class="btn btn-outline-primary" onclick="showJobDetail('${jobId}')">
                                                         <i class="fas fa-eye"></i> 詳細
                                                     </button>
                                                     ${job.status === 'running' ? `
-                                                        <button class="btn btn-outline-warning" onclick="stopJob('${job.job_id}')">
+                                                        <button class="btn btn-outline-warning" onclick="stopJob('${jobId}')">
                                                             <i class="fas fa-stop"></i> 停止
                                                         </button>
                                                     ` : ''}
@@ -1229,18 +1337,19 @@
                 const job = await response.json();
                 
                 const content = document.getElementById('job-detail-content');
-                const startTime = new Date(job.start_time).toLocaleString('ja-JP');
-                const endTime = job.end_time ? new Date(job.end_time).toLocaleString('ja-JP') : '-';
-                const duration = job.end_time ? 
-                    Math.round((new Date(job.end_time) - new Date(job.start_time)) / 1000) + '秒' : 
+                const startTime = new Date(job.progress?.start_time || job.created_at).toLocaleString('ja-JP');
+                const endTime = job.progress?.end_time ? new Date(job.progress.end_time).toLocaleString('ja-JP') : '-';
+                const duration = job.progress?.end_time ? 
+                    Math.round((new Date(job.progress.end_time) - new Date(job.progress.start_time || job.created_at)) / 1000) + '秒' : 
                     '実行中';
+                const jobIdFromResponse = job.id || job.job_id;
                 
                 content.innerHTML = `
                     <div class="row mb-3">
                         <div class="col-md-6">
                             <h6>基本情報</h6>
                             <table class="table table-sm">
-                                <tr><td>ジョブID:</td><td><code>${job.job_id}</code></td></tr>
+                                <tr><td>ジョブID:</td><td><code>${jobIdFromResponse || 'N/A'}</code></td></tr>
                                 <tr><td>ステータス:</td><td><span class="badge ${getJobStatusClass(job.status)}">${getJobStatusText(job.status)}</span></td></tr>
                                 <tr><td>開始時刻:</td><td>${startTime}</td></tr>
                                 <tr><td>終了時刻:</td><td>${endTime}</td></tr>
@@ -1250,10 +1359,10 @@
                         <div class="col-md-6">
                             <h6>実行結果</h6>
                             <table class="table table-sm">
-                                <tr><td>総リクエスト数:</td><td>${job.total_requests}</td></tr>
-                                <tr><td>成功:</td><td class="text-success">${job.successful_requests}</td></tr>
-                                <tr><td>失敗:</td><td class="text-danger">${job.failed_requests}</td></tr>
-                                <tr><td>成功率:</td><td>${job.total_requests > 0 ? Math.round((job.successful_requests / job.total_requests) * 100) : 0}%</td></tr>
+                                <tr><td>総リクエスト数:</td><td>${job.progress?.total_requests || 0}</td></tr>
+                                <tr><td>成功:</td><td class="text-success">${job.progress?.successful_requests || 0}</td></tr>
+                                <tr><td>失敗:</td><td class="text-danger">${job.progress?.failed_requests || 0}</td></tr>
+                                <tr><td>成功率:</td><td>${(job.progress?.total_requests || 0) > 0 ? Math.round(((job.progress?.successful_requests || 0) / (job.progress?.total_requests || 1)) * 100) : 0}%</td></tr>
                             </table>
                         </div>
                     </div>
