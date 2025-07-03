@@ -111,12 +111,68 @@ class JobManager:
         self._max_concurrent_jobs = 5
         self._active_jobs = 0
         self._db_session: Optional[Session] = None
+        
+        # 起動時にデータベースからジョブを復元
+        self._restore_jobs_from_database()
     
     def _get_db_session(self) -> Session:
         """データベースセッションを取得"""
         if self._db_session is None:
             self._db_session = db_manager.SessionLocal()
         return self._db_session
+    
+    def _restore_jobs_from_database(self):
+        """データベースからジョブを復元"""
+        try:
+            print("データベースからジョブを復元中...")
+            db = self._get_db_session()
+            db_jobs = db_manager.get_all_jobs(db)
+            
+            restored_count = 0
+            for db_job in db_jobs:
+                try:
+                    # データベースのジョブをメモリ内のJobオブジェクトに変換
+                    progress_data = db_job.get_progress()
+                    # JobProgressの有効なフィールドのみを抽出
+                    valid_fields = ['total_requests', 'completed_requests', 'successful_requests', 
+                                   'failed_requests', 'current_request', 'start_time', 'end_time', 
+                                   'estimated_remaining_time']
+                    progress_init_data = {k: v for k, v in progress_data.items() if k in valid_fields}
+                    
+                    # 日時文字列をdatetimeオブジェクトに変換
+                    if 'start_time' in progress_init_data and isinstance(progress_init_data['start_time'], str):
+                        progress_init_data['start_time'] = datetime.fromisoformat(progress_init_data['start_time'])
+                    if 'end_time' in progress_init_data and isinstance(progress_init_data['end_time'], str):
+                        progress_init_data['end_time'] = datetime.fromisoformat(progress_init_data['end_time'])
+                        
+                    progress = JobProgress(**progress_init_data)
+                    
+                    job = Job(
+                        id=db_job.id,
+                        name=db_job.name,
+                        status=JobStatus(db_job.status),
+                        progress=progress,
+                        created_at=db_job.created_at,
+                        updated_at=db_job.updated_at,
+                        request_id=db_job.fuzzer_request_id,
+                        http_config=db_job.http_config,
+                        results=[],
+                        error_message=db_job.error_message
+                    )
+                    
+                    # メモリに復元
+                    with self._lock:
+                        self._jobs[db_job.id] = job
+                    
+                    restored_count += 1
+                    
+                except Exception as e:
+                    print(f"ジョブ {db_job.id} の復元に失敗: {e}")
+                    
+            print(f"データベースから {restored_count} 件のジョブを復元しました")
+            
+        except Exception as e:
+            print(f"ジョブ復元時のエラー: {e}")
     
     def create_job(self, name: str, request_id: int, total_requests: int, 
                    http_config: Optional[Dict[str, Any]] = None) -> str:
@@ -203,7 +259,20 @@ class JobManager:
             for db_job in db_jobs:
                 if db_job.id not in memory_job_ids:
                     # データベースのジョブをメモリ内のJobオブジェクトに変換
-                    progress = JobProgress(**db_job.get_progress())
+                    progress_data = db_job.get_progress()
+                    # JobProgressの有効なフィールドのみを抽出
+                    valid_fields = ['total_requests', 'completed_requests', 'successful_requests', 
+                                   'failed_requests', 'current_request', 'start_time', 'end_time', 
+                                   'estimated_remaining_time']
+                    progress_init_data = {k: v for k, v in progress_data.items() if k in valid_fields}
+                    
+                    # 日時文字列をdatetimeオブジェクトに変換
+                    if 'start_time' in progress_init_data and isinstance(progress_init_data['start_time'], str):
+                        progress_init_data['start_time'] = datetime.fromisoformat(progress_init_data['start_time'])
+                    if 'end_time' in progress_init_data and isinstance(progress_init_data['end_time'], str):
+                        progress_init_data['end_time'] = datetime.fromisoformat(progress_init_data['end_time'])
+                        
+                    progress = JobProgress(**progress_init_data)
                     job = Job(
                         id=db_job.id,
                         name=db_job.name,
@@ -438,10 +507,13 @@ class JobManager:
             }
         except Exception as e:
             print(f"データベース統計取得エラー: {e}")
+            # エラーが発生した場合はメモリ内の統計情報を返す
             return {
                 'total_jobs': total_jobs,
                 'status_distribution': status_counts,
-                'active_jobs': self._active_jobs
+                'active_jobs': self._active_jobs,
+                'total_requests': 0,
+                'avg_execution_time': 0
             }
 
 

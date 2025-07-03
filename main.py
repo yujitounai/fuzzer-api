@@ -1099,6 +1099,29 @@ async def get_jobs():
         total=len(jobs)
     )
 
+@app.get("/api/jobs/statistics")
+async def get_job_statistics():
+    """
+    ジョブ統計情報を取得するエンドポイント
+    """
+    try:
+        stats = job_manager.get_job_statistics()
+        print(f"[DEBUG] /api/jobs/statistics response: {stats}")
+        return stats
+    except Exception as e:
+        print(f"[ERROR] /api/jobs/statistics: {e}")
+        # 空の統計情報を返す
+        return {
+            "total_jobs": 0,
+            "pending_jobs": 0,
+            "running_jobs": 0,
+            "completed_jobs": 0,
+            "failed_jobs": 0,
+            "cancelled_jobs": 0,
+            "total_requests": 0,
+            "avg_execution_time": 0
+        }
+
 @app.get("/api/jobs/{job_id}", response_model=JobStatusResponseModel)
 async def get_job_status(job_id: str, db: Session = Depends(get_db)):
     """
@@ -1123,7 +1146,21 @@ async def get_job_status(job_id: str, db: Session = Depends(get_db)):
             raise HTTPException(status_code=404, detail="ジョブが見つかりません")
         
         # データベースのジョブをメモリ内のJobオブジェクトに変換
-        progress = job_manager.JobProgress(**db_job.get_progress())
+        progress_data = db_job.get_progress()
+        # JobProgressの有効なフィールドのみを抽出
+        valid_fields = ['total_requests', 'completed_requests', 'successful_requests', 
+                       'failed_requests', 'current_request', 'start_time', 'end_time', 
+                       'estimated_remaining_time']
+        progress_init_data = {k: v for k, v in progress_data.items() if k in valid_fields}
+        
+        # 日時文字列をdatetimeオブジェクトに変換
+        from datetime import datetime
+        if 'start_time' in progress_init_data and isinstance(progress_init_data['start_time'], str):
+            progress_init_data['start_time'] = datetime.fromisoformat(progress_init_data['start_time'])
+        if 'end_time' in progress_init_data and isinstance(progress_init_data['end_time'], str):
+            progress_init_data['end_time'] = datetime.fromisoformat(progress_init_data['end_time'])
+            
+        progress = job_manager.JobProgress(**progress_init_data)
         job = job_manager.Job(
             id=db_job.id,
             name=db_job.name,
@@ -1220,13 +1257,7 @@ async def cleanup_jobs(max_age_hours: int = 24):
         "max_age_hours": max_age_hours
     }
 
-@app.get("/api/jobs/statistics")
-async def get_job_statistics():
-    """
-    ジョブ統計情報を取得するエンドポイント
-    """
-    stats = job_manager.get_job_statistics()
-    return stats  # 404をraiseしない
+
 
 @app.get("/test", response_class=HTMLResponse)
 async def test_page():

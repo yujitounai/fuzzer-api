@@ -508,9 +508,11 @@ class DatabaseManager:
         
         return {
             "total_jobs": total_jobs,
-            "completed_jobs": status_counts.get("completed", 0),
+            "pending_jobs": status_counts.get("pending", 0),
             "running_jobs": status_counts.get("running", 0),
+            "completed_jobs": status_counts.get("completed", 0),
             "failed_jobs": status_counts.get("failed", 0),
+            "cancelled_jobs": status_counts.get("cancelled", 0),
             "total_requests": total_requests,
             "avg_execution_time": avg_execution_time
         }
