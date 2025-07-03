@@ -226,6 +226,8 @@ class HTTPRequestConfigModel(BaseModel):
         scheme (str): プロトコル（http または https）
         base_url (str): ベースURL（スキームなし）
         additional_headers (Dict[str, str]): 追加のヘッダー
+        sequential_execution (bool): 同期実行フラグ（True: 順次実行, False: 並列実行）
+        request_delay (float): リクエスト間の待機時間（秒）
     """
     timeout: int = 30
     follow_redirects: bool = True
@@ -233,6 +235,8 @@ class HTTPRequestConfigModel(BaseModel):
     scheme: str = "http"
     base_url: str = "localhost:8000"
     additional_headers: Optional[Dict[str, str]] = None
+    sequential_execution: bool = False
+    request_delay: float = 0.0
 
 class ExecuteRequestModel(BaseModel):
     """
@@ -984,7 +988,9 @@ async def execute_requests(request: ExecuteRequestModel, db: Session = Depends(g
                 'verify_ssl': request.http_config.verify_ssl,
                 'scheme': request.http_config.scheme,
                 'base_url': request.http_config.base_url,
-                'additional_headers': request.http_config.additional_headers
+                'additional_headers': request.http_config.additional_headers,
+                'sequential_execution': request.http_config.sequential_execution,
+                'request_delay': request.http_config.request_delay
             }
         
         # ジョブを作成
@@ -1069,6 +1075,7 @@ async def execute_single_request(request: ExecuteSingleRequestModel, db: Session
             scheme=request.http_config.scheme,
             base_url=request.http_config.base_url,
             headers=request.http_config.additional_headers
+            # 単一リクエストなのでsequential_executionやrequest_delayは不要
         )
     
     try:
@@ -1199,10 +1206,50 @@ async def get_job_status(job_id: str, db: Session = Depends(get_db)):
         error_message=job.error_message
     )
 
+@app.post("/api/jobs/{job_id}/stop")
+async def stop_job(job_id: str):
+    """
+    ジョブを停止するエンドポイント
+    
+    Args:
+        job_id (str): ジョブのID
+        
+    Returns:
+        Dict[str, str]: 停止結果
+        
+    Raises:
+        HTTPException: ジョブが見つからない場合
+    """
+    success = job_manager.cancel_job(job_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="ジョブが見つかりません")
+    
+    return {"message": f"ジョブ {job_id} を停止しました"}
+
+@app.post("/api/jobs/{job_id}/resume")
+async def resume_job(job_id: str):
+    """
+    ジョブを再開するエンドポイント
+    
+    Args:
+        job_id (str): ジョブのID
+        
+    Returns:
+        Dict[str, str]: 再開結果
+        
+    Raises:
+        HTTPException: ジョブが見つからない、または再開できない場合
+    """
+    success = job_manager.resume_job(job_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="ジョブが見つからないか、再開できない状態です")
+    
+    return {"message": f"ジョブ {job_id} を再開しました"}
+
 @app.delete("/api/jobs/{job_id}")
 async def cancel_job(job_id: str):
     """
-    ジョブをキャンセルするエンドポイント
+    ジョブをキャンセルするエンドポイント（下位互換性のため保持）
     
     Args:
         job_id (str): ジョブのID

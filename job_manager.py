@@ -111,9 +111,14 @@ class JobManager:
         self._max_concurrent_jobs = 5
         self._active_jobs = 0
         self._db_session: Optional[Session] = None
+        self._job_processor_active = True
+        self._running_tasks: Dict[str, Any] = {}  # 実行中のタスクを追跡
         
         # 起動時にデータベースからジョブを復元
         self._restore_jobs_from_database()
+        
+        # バックグラウンドでジョブを処理するスレッドを開始
+        self._start_job_processor()
     
     def _get_db_session(self) -> Session:
         """データベースセッションを取得"""
@@ -173,6 +178,108 @@ class JobManager:
             
         except Exception as e:
             print(f"ジョブ復元時のエラー: {e}")
+    
+    def _start_job_processor(self):
+        """バックグラウンドジョブ処理スレッドを開始"""
+        def job_processor():
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            while self._job_processor_active:
+                try:
+                    # PENDING状態のジョブを探す
+                    pending_jobs = []
+                    with self._lock:
+                        for job in self._jobs.values():
+                            if job.status == JobStatus.PENDING:
+                                pending_jobs.append(job)
+                    
+                    if pending_jobs:
+                        print(f"バックグラウンド処理: {len(pending_jobs)}件のPENDINGジョブを発見")
+                    
+                    # PENDING状態のジョブを実行（一つずつ）
+                    for job in pending_jobs:
+                        if self._active_jobs < self._max_concurrent_jobs:
+                            print(f"PENDING ジョブ {job.id} を実行開始 (アクティブ: {self._active_jobs}/{self._max_concurrent_jobs})")
+                            loop.run_until_complete(self._execute_pending_job(job.id))
+                        else:
+                            print(f"同時実行数制限に達しているため、ジョブ {job.id} はスキップ")
+                    
+                    time.sleep(5)  # 5秒間隔でチェック
+                except Exception as e:
+                    print(f"ジョブ処理スレッドエラー: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    time.sleep(5)
+            
+            loop.close()
+        
+        # デーモンスレッドとして開始
+        processor_thread = threading.Thread(target=job_processor, daemon=True)
+        processor_thread.start()
+        print("バックグラウンドジョブ処理スレッドを開始しました")
+    
+    async def _execute_pending_job(self, job_id: str):
+        """PENDING状態のジョブを実行"""
+        self._active_jobs += 1
+        try:
+            job = self.get_job(job_id)
+            if not job or job.status != JobStatus.PENDING:
+                print(f"ジョブ {job_id}: 実行対象外 - ステータス: {job.status if job else 'None'}")
+                return
+            
+            print(f"PENDING ジョブ {job_id} の自動実行を開始")
+            
+            # 元のリクエストデータを取得
+            from database import db_manager
+            db = self._get_db_session()
+            
+            try:
+                fuzzer_request = db_manager.get_fuzzer_request_by_id(db, job.request_id)
+                if not fuzzer_request:
+                    print(f"ジョブ {job_id}: リクエストデータが見つかりません (request_id: {job.request_id})")
+                    self.complete_job(job_id, [], f"リクエストデータが見つかりません (request_id: {job.request_id})")
+                    return
+                
+                print(f"ジョブ {job_id}: リクエストデータ取得成功")
+                
+                # 生成されたリクエストを抽出
+                requests_data = []
+                for gen_req in fuzzer_request.generated_requests:
+                    req_dict = {
+                        "request": gen_req.request_content,
+                        "placeholder": gen_req.placeholder,
+                        "payload": gen_req.payload,
+                        "position": gen_req.position
+                    }
+                    
+                    # applied_toフィールドがある場合は追加
+                    if gen_req.applied_to:
+                        req_dict["applied_to"] = gen_req.get_applied_to()
+                    
+                    requests_data.append(req_dict)
+                
+                if not requests_data:
+                    print(f"ジョブ {job_id}: 生成されたリクエストが空です")
+                    self.complete_job(job_id, [], "生成されたリクエストが空です")
+                    return
+                
+                print(f"ジョブ {job_id}: {len(requests_data)}件の生成リクエストを実行開始")
+                
+                # リクエストを再実行
+                await self.execute_requests_job(job_id, requests_data, job.http_config)
+                
+            except Exception as db_error:
+                print(f"ジョブ {job_id}: データベースからのリクエスト取得エラー: {db_error}")
+                self.complete_job(job_id, [], f"データベースエラー: {str(db_error)}")
+                return
+            
+        except Exception as e:
+            print(f"PENDING ジョブ {job_id} の実行エラー: {e}")
+            self.complete_job(job_id, [], str(e))
+        finally:
+            self._active_jobs -= 1
     
     def create_job(self, name: str, request_id: int, total_requests: int, 
                    http_config: Optional[Dict[str, Any]] = None) -> str:
@@ -395,10 +502,78 @@ class JobManager:
             if not job:
                 return False
             
+            # 実行中のタスクをキャンセル
+            if job_id in self._running_tasks:
+                task = self._running_tasks[job_id]
+                if hasattr(task, 'cancel'):
+                    print(f"ジョブ {job_id}: 実行中のタスクをキャンセル中...")
+                    task.cancel()
+                del self._running_tasks[job_id]
+            
             job.status = JobStatus.CANCELLED
             job.progress.end_time = datetime.now()
             job.updated_at = datetime.now()
-            return True
+        
+        # データベースも更新
+        try:
+            db = self._get_db_session()
+            db_manager.update_job(
+                db=db,
+                job_id=job_id,
+                status=JobStatus.CANCELLED.value,
+                progress=job.progress.to_dict()
+            )
+        except Exception as e:
+            print(f"ジョブキャンセル時のデータベース更新エラー: {e}")
+            
+        return True
+    
+    def resume_job(self, job_id: str) -> bool:
+        """ジョブを再開"""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                print(f"ジョブ再開エラー: ジョブ {job_id} が見つかりません")
+                return False
+            
+            # キャンセルまたは失敗状態のジョブのみ再開可能
+            if job.status not in [JobStatus.CANCELLED, JobStatus.FAILED]:
+                print(f"ジョブ再開エラー: ジョブ {job_id} は再開できない状態です (現在: {job.status})")
+                return False
+            
+            print(f"ジョブ {job_id} を再開: {job.status} -> PENDING")
+            
+            # ジョブを待機状態にリセット
+            job.status = JobStatus.PENDING
+            job.progress.end_time = None
+            job.error_message = None
+            job.updated_at = datetime.now()
+            
+            # 部分実行されたリクエストがある場合、継続から再開するのではなく、最初から再実行
+            # 簡素化のため、一度完全にリセット
+            # job.progress.completed_requests = 0
+            # job.progress.successful_requests = 0 
+            # job.progress.failed_requests = 0
+            # job.progress.current_request = 0
+            job.results = []  # 結果もクリア
+        
+        # データベースも更新
+        try:
+            db = self._get_db_session()
+            db_manager.update_job(
+                db=db,
+                job_id=job_id,
+                status=JobStatus.PENDING.value,
+                progress=job.progress.to_dict(),
+                error_message=None
+            )
+            print(f"ジョブ {job_id}: データベース更新完了")
+        except Exception as e:
+            print(f"ジョブ再開時のデータベース更新エラー: {e}")
+            return False
+            
+        print(f"ジョブ {job_id}: 再開準備完了、バックグラウンド処理待ち")
+        return True
     
     def delete_job(self, job_id: str) -> bool:
         """ジョブを削除"""
@@ -449,11 +624,22 @@ class JobManager:
                 config.follow_redirects = http_config.get('follow_redirects', True)
                 config.verify_ssl = http_config.get('verify_ssl', True)
                 config.headers = http_config.get('additional_headers')
+                config.sequential_execution = http_config.get('sequential_execution', False)
+                config.request_delay = http_config.get('request_delay', 0.0)
             
             print(f"ジョブ {job_id}: リクエスト実行開始 - {len(requests)}件のリクエスト")
             
-            # リクエストを実行
-            results = await RequestExecutor.execute_requests(requests, config)
+            # リクエストを実行（キャンセル可能なタスクとして）
+            task = asyncio.create_task(
+                self._execute_requests_with_cancellation(job_id, requests, config)
+            )
+            
+            # 実行中のタスクを記録
+            with self._lock:
+                self._running_tasks[job_id] = task
+            
+            # タスクを実行
+            results = await task
             
             print(f"ジョブ {job_id}: リクエスト実行完了 - 結果数: {len(results)}")
             print(f"ジョブ {job_id}: 結果の詳細: {results[:2]}...")  # 最初の2件を表示
@@ -470,10 +656,109 @@ class JobManager:
             # ジョブ完了
             self.complete_job(job_id, results)
             
+        except asyncio.CancelledError:
+            print(f"ジョブ {job_id}: キャンセルされました")
+            # ジョブはすでにキャンセル状態になっているはず
         except Exception as e:
             print(f"ジョブ {job_id}: エラー発生 - {e}")
             # エラーでジョブ終了
             self.complete_job(job_id, [], str(e))
+        finally:
+            # 実行中のタスクから削除
+            with self._lock:
+                if job_id in self._running_tasks:
+                    del self._running_tasks[job_id]
+    
+    async def _execute_requests_with_cancellation(self, job_id: str, requests: List[Dict[str, Any]], 
+                                                  config: 'HTTPRequestConfig') -> List[Dict[str, Any]]:
+        """キャンセル対応のリクエスト実行"""
+        from http_client import RequestExecutor
+        
+        # 定期的にキャンセル状態をチェックしながら実行
+        if config.sequential_execution:
+            # 同期実行の場合は一つずつ実行し、キャンセルチェックを行う
+            return await self._execute_requests_sequential_with_cancel(job_id, requests, config)
+        else:
+            # 並列実行の場合
+            return await RequestExecutor.execute_requests(requests, config)
+    
+    async def _execute_requests_sequential_with_cancel(self, job_id: str, requests: List[Dict[str, Any]], 
+                                                       config: 'HTTPRequestConfig') -> List[Dict[str, Any]]:
+        """キャンセル対応の同期実行"""
+        from http_client import HTTPClient
+        
+        results = []
+        
+        async with HTTPClient() as client:
+            for i, request in enumerate(requests):
+                # キャンセル状態をチェック
+                job = self.get_job(job_id)
+                if job and job.status == JobStatus.CANCELLED:
+                    print(f"ジョブ {job_id}: リクエスト {i+1} でキャンセル検出、実行を停止")
+                    break
+                
+                print(f"同期実行: リクエスト {i+1}/{len(requests)} を送信中...")
+                try:
+                    response = await client.send_request(request["request"], config)
+                    result = {
+                        **request,
+                        "http_response": {
+                            "status_code": response.status_code,
+                            "headers": response.headers,
+                            "body": response.body,
+                            "url": response.url,
+                            "elapsed_time": response.elapsed_time,
+                            "error": response.error
+                        }
+                    }
+                    results.append(result)
+                    print(f"同期実行: リクエスト {i+1} 完了 - ステータス: {response.status_code}")
+                    
+                    # 進捗を更新
+                    self.update_job_progress(job_id, i+1, len([r for r in results if not r.get('http_response', {}).get('error')]), 
+                                           len([r for r in results if r.get('http_response', {}).get('error')]), i+1)
+                    
+                    # リクエスト間の待機時間（最後のリクエスト以外）
+                    if i < len(requests) - 1 and config.request_delay > 0:
+                        print(f"同期実行: {config.request_delay}秒待機中...")
+                        
+                        # 待機中もキャンセルチェック（1秒刻みで）
+                        wait_time = config.request_delay
+                        while wait_time > 0:
+                            sleep_duration = min(1.0, wait_time)
+                            await asyncio.sleep(sleep_duration)
+                            wait_time -= sleep_duration
+                            
+                            # キャンセルチェック
+                            job = self.get_job(job_id)
+                            if job and job.status == JobStatus.CANCELLED:
+                                print(f"ジョブ {job_id}: 待機中にキャンセル検出、実行を停止")
+                                return results
+                        
+                except Exception as e:
+                    print(f"同期実行: リクエスト {i+1} エラー - {str(e)}")
+                    result = {
+                        **request,
+                        "http_response": {
+                            "status_code": 0,
+                            "headers": {},
+                            "body": "",
+                            "url": "",
+                            "elapsed_time": 0,
+                            "error": str(e)
+                        }
+                    }
+                    results.append(result)
+                    
+                    # 進捗を更新
+                    self.update_job_progress(job_id, i+1, len([r for r in results if not r.get('http_response', {}).get('error')]), 
+                                           len([r for r in results if r.get('http_response', {}).get('error')]), i+1)
+                    
+                    # エラーが発生してもウェイトを入れる（オプション）
+                    if i < len(requests) - 1 and config.request_delay > 0:
+                        await asyncio.sleep(config.request_delay)
+                        
+        return results
     
     def get_job_statistics(self) -> Dict[str, Any]:
         """ジョブ統計情報を取得"""

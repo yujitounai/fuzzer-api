@@ -301,6 +301,20 @@
                                 </div>
                             </div>
                             <div class="mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="sequential-execution">
+                                    <label class="form-check-label" for="sequential-execution">
+                                        同期実行（リクエストを順次実行）
+                                    </label>
+                                </div>
+                                <div class="form-text">チェックすると、リクエストを並列ではなく順次実行します</div>
+                            </div>
+                            <div class="mb-3">
+                                <label for="request-delay" class="form-label">リクエスト間ウェイト（秒）</label>
+                                <input type="number" class="form-control" id="request-delay" value="0" min="0" max="60" step="0.1">
+                                <div class="form-text">同期実行時のリクエスト間の待機時間（0の場合はウェイトなし）</div>
+                            </div>
+                            <div class="mb-3">
                                 <label for="additional-headers" class="form-label">追加ヘッダー（JSON形式）</label>
                                 <textarea class="form-control" id="additional-headers" rows="3" placeholder='{"User-Agent": "Custom-Agent/1.0"}'></textarea>
                             </div>
@@ -661,6 +675,8 @@
             const timeout = parseInt(document.getElementById('timeout').value);
             const followRedirects = document.getElementById('follow-redirects').checked;
             const verifySsl = document.getElementById('verify-ssl').checked;
+            const sequentialExecution = document.getElementById('sequential-execution').checked;
+            const requestDelay = parseFloat(document.getElementById('request-delay').value);
             const additionalHeadersText = document.getElementById('additional-headers').value;
 
             let additionalHeaders = null;
@@ -690,6 +706,7 @@
                         follow_redirects: followRedirects,
                         verify_ssl: verifySsl,
                         additional_headers: additionalHeaders
+                        // 単一リクエストなので同期実行オプションは不要
                     }
                 } : {
                     request_id: requestId,
@@ -699,6 +716,8 @@
                         timeout: timeout,
                         follow_redirects: followRedirects,
                         verify_ssl: verifySsl,
+                        sequential_execution: sequentialExecution,
+                        request_delay: requestDelay,
                         additional_headers: additionalHeaders
                     }
                 };
@@ -792,7 +811,13 @@
                             </div>
                             <p class="mt-2">ジョブ実行中... (${attempts}/${maxAttempts})</p>
                             <p class="text-muted">ステータス: ${getJobStatusText(job.status)}</p>
+                            <p class="text-muted">進捗: ${job.progress?.completed_requests || 0}/${job.progress?.total_requests || 0} (${job.progress?.progress_percentage?.toFixed(1) || 0}%)</p>
                             <small class="text-muted">ジョブID: ${jobId.substring(0, 8)}...</small>
+                            <div class="mt-3">
+                                <button class="btn btn-warning btn-sm" onclick="stopJobFromModal('${jobId}')">
+                                    <i class="fas fa-stop"></i> ジョブを停止
+                                </button>
+                            </div>
                         </div>
                     `;
                     
@@ -1196,6 +1221,18 @@
                 // APIレスポンスの形式を確認して適切に処理
                 const jobs = data.jobs || data;
                 
+                // 実行中のジョブの監視を開始
+                if (Array.isArray(jobs)) {
+                    jobs.forEach(job => {
+                        if (job.status === 'running' || job.status === 'pending') {
+                            const jobId = job.id || job.job_id;
+                            if (jobId && !jobMonitoringIntervals[jobId]) {
+                                startJobMonitoring(jobId);
+                            }
+                        }
+                    });
+                }
+                
                 if (!Array.isArray(jobs) || jobs.length === 0) {
                     jobsList.innerHTML = `
                         <div class="text-center p-4">
@@ -1247,6 +1284,11 @@
                                                     ${job.status === 'running' ? `
                                                         <button class="btn btn-outline-warning" onclick="stopJob('${jobId}')">
                                                             <i class="fas fa-stop"></i> 停止
+                                                        </button>
+                                                    ` : ''}
+                                                    ${job.status === 'cancelled' || job.status === 'failed' ? `
+                                                        <button class="btn btn-outline-success" onclick="resumeJob('${jobId}')">
+                                                            <i class="fas fa-play"></i> 再開
                                                         </button>
                                                     ` : ''}
                                                 </div>
@@ -1432,6 +1474,70 @@
                 
                 if (response.ok) {
                     alert('ジョブを停止しました。');
+                    // 即座にジョブ一覧を更新
+                    loadJobs();
+                    
+                    // 監視を停止
+                    stopJobMonitoring(jobId);
+                } else {
+                    const error = await response.json();
+                    alert(`停止に失敗しました: ${error.detail}`);
+                }
+            } catch (error) {
+                console.error('ジョブ停止に失敗しました:', error);
+                alert('ジョブ停止に失敗しました。');
+            }
+        }
+
+        async function resumeJob(jobId) {
+            if (!confirm(`ジョブ ${jobId.substring(0, 8)}... を再開しますか？`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/jobs/${jobId}/resume`, {
+                    method: 'POST'
+                });
+                
+                if (response.ok) {
+                    alert('ジョブを再開しました。');
+                    // 即座にジョブ一覧を更新
+                    loadJobs();
+                    
+                    // 少し待ってからもう一度更新（バックグラウンド処理の反映を待つ）
+                    setTimeout(() => {
+                        loadJobs();
+                    }, 2000);
+                    
+                    // 定期的に更新して実行状態を追跡
+                    startJobMonitoring(jobId);
+                } else {
+                    const error = await response.json();
+                    alert(`再開に失敗しました: ${error.detail}`);
+                }
+            } catch (error) {
+                console.error('ジョブ再開に失敗しました:', error);
+                alert('ジョブ再開に失敗しました。');
+            }
+        }
+
+        async function stopJobFromModal(jobId) {
+            if (!confirm(`実行中のジョブ ${jobId.substring(0, 8)}... を停止しますか？`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/jobs/${jobId}/stop`, {
+                    method: 'POST'
+                });
+                
+                if (response.ok) {
+                    // 結果モーダルを閉じて一覧を更新
+                    const resultModal = bootstrap.Modal.getInstance(document.getElementById('resultModal'));
+                    if (resultModal) {
+                        resultModal.hide();
+                    }
+                    alert('ジョブを停止しました。');
                     loadJobs();
                 } else {
                     const error = await response.json();
@@ -1477,6 +1583,52 @@
             }
         }
 
+        // ジョブ監視機能
+        let jobMonitoringIntervals = {};
+
+        function startJobMonitoring(jobId) {
+            // 既存の監視を停止
+            stopJobMonitoring(jobId);
+            
+            console.log(`ジョブ監視開始: ${jobId}`);
+            
+            // 5秒間隔でジョブ状態を監視
+            jobMonitoringIntervals[jobId] = setInterval(async () => {
+                try {
+                    const response = await fetch(`/api/jobs/${jobId}`);
+                    if (response.ok) {
+                        const job = await response.json();
+                        console.log(`ジョブ ${jobId} 状態: ${job.status}`);
+                        
+                        // ジョブ一覧を更新
+                        loadJobs();
+                        
+                        // ジョブが完了・失敗・キャンセルされた場合は監視を停止
+                        if (['completed', 'failed', 'cancelled'].includes(job.status)) {
+                            console.log(`ジョブ監視終了: ${jobId} (${job.status})`);
+                            stopJobMonitoring(jobId);
+                        }
+                    }
+                } catch (error) {
+                    console.error(`ジョブ監視エラー: ${jobId}`, error);
+                }
+            }, 5000);
+        }
+
+        function stopJobMonitoring(jobId) {
+            if (jobMonitoringIntervals[jobId]) {
+                clearInterval(jobMonitoringIntervals[jobId]);
+                delete jobMonitoringIntervals[jobId];
+                console.log(`ジョブ監視停止: ${jobId}`);
+            }
+        }
+
+        function stopAllJobMonitoring() {
+            Object.keys(jobMonitoringIntervals).forEach(jobId => {
+                stopJobMonitoring(jobId);
+            });
+        }
+
         // ジョブ関連のユーティリティ関数
         function getJobStatusClass(status) {
             const classes = {
@@ -1499,6 +1651,33 @@
             };
             return texts[status] || status;
         }
+
+        // 同期実行チェックボックスの状態に応じてリクエスト間ウェイト入力欄を制御
+        document.addEventListener('DOMContentLoaded', function() {
+            const sequentialExecutionCheckbox = document.getElementById('sequential-execution');
+            const requestDelayInput = document.getElementById('request-delay');
+
+            function toggleRequestDelayInput() {
+                if (sequentialExecutionCheckbox.checked) {
+                    requestDelayInput.disabled = false;
+                    requestDelayInput.parentElement.style.opacity = '1';
+                } else {
+                    requestDelayInput.disabled = true;
+                    requestDelayInput.parentElement.style.opacity = '0.5';
+                    requestDelayInput.value = '0'; // 無効時は0にリセット
+                }
+            }
+
+            sequentialExecutionCheckbox.addEventListener('change', toggleRequestDelayInput);
+            
+            // 初期状態を設定
+            toggleRequestDelayInput();
+        });
+
+        // ページ離脱時に監視をクリーンアップ
+        window.addEventListener('beforeunload', function() {
+            stopAllJobMonitoring();
+        });
     </script>
 </body>
 </html> 
