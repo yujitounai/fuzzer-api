@@ -324,6 +324,100 @@ class JobStatusResponseModel(BaseModel):
     results: Optional[List[Dict[str, Any]]] = None
     error_message: Optional[str] = None
 
+class JobSummaryResponseModel(BaseModel):
+    """
+    ジョブサマリーレスポンスの定義（結果データを含まない）
+    
+    Attributes:
+        job_id (str): ジョブのID
+        status (str): ジョブの状態
+        progress (Dict[str, Any]): 進捗情報
+        error_message (Optional[str]): エラーメッセージ
+        created_at (str): 作成日時
+        updated_at (str): 更新日時
+        request_id (Optional[int]): 関連するリクエストID
+    """
+    job_id: str
+    status: str
+    progress: Dict[str, Any]
+    error_message: Optional[str] = None
+    created_at: str
+    updated_at: str
+    request_id: Optional[int] = None
+
+class JobResultSummaryModel(BaseModel):
+    """
+    ジョブ結果サマリーの定義
+    
+    Attributes:
+        request_number (int): リクエスト番号
+        placeholder (Optional[str]): プレースホルダ名
+        payload (Optional[str]): ペイロード
+        position (Optional[int]): 位置
+        status_code (Optional[int]): HTTPステータスコード
+        success (bool): 成功フラグ
+        error_message (Optional[str]): エラーメッセージ
+        elapsed_time (Optional[float]): 実行時間
+        url (Optional[str]): リクエストURL
+    """
+    request_number: int
+    placeholder: Optional[str] = None
+    payload: Optional[str] = None
+    position: Optional[int] = None
+    status_code: Optional[int] = None
+    success: bool
+    error_message: Optional[str] = None
+    elapsed_time: Optional[float] = None
+    url: Optional[str] = None
+
+class JobResultsResponseModel(BaseModel):
+    """
+    ジョブ結果リストレスポンスの定義
+    
+    Attributes:
+        job_id (str): ジョブのID
+        total_results (int): 総結果数
+        results (List[JobResultSummaryModel]): 結果サマリーのリスト
+        limit (int): 取得制限数
+        offset (int): オフセット
+        has_more (bool): 更に結果があるかどうか
+    """
+    job_id: str
+    total_results: int
+    results: List[JobResultSummaryModel]
+    limit: int
+    offset: int
+    has_more: bool
+
+class JobResultDetailResponseModel(BaseModel):
+    """
+    ジョブ結果詳細レスポンスの定義
+    
+    Attributes:
+        job_id (str): ジョブのID
+        request_number (int): リクエスト番号
+        request_content (str): リクエスト内容
+        placeholder (Optional[str]): プレースホルダ名
+        payload (Optional[str]): ペイロード
+        position (Optional[int]): 位置
+        http_response (Optional[Dict[str, Any]]): HTTPレスポンス
+        success (bool): 成功フラグ
+        error_message (Optional[str]): エラーメッセージ
+        elapsed_time (Optional[float]): 実行時間
+        created_at (str): 作成日時
+    """
+    job_id: str
+    request_number: int
+    request_content: str
+    placeholder: Optional[str] = None
+    payload: Optional[str] = None
+    position: Optional[int] = None
+    http_response: Optional[Dict[str, Any]] = None
+    success: bool
+    error_message: Optional[str] = None
+    elapsed_time: Optional[float] = None
+    created_at: str
+
 class JobListResponseModel(BaseModel):
     """
     ジョブ一覧レスポンスの定義
@@ -1129,17 +1223,17 @@ async def get_job_statistics():
             "avg_execution_time": 0
         }
 
-@app.get("/api/jobs/{job_id}", response_model=JobStatusResponseModel)
+@app.get("/api/jobs/{job_id}", response_model=JobSummaryResponseModel)
 async def get_job_status(job_id: str, db: Session = Depends(get_db)):
     """
-    ジョブの状態を取得するエンドポイント
+    ジョブのサマリー情報を取得するエンドポイント
     
     Args:
         job_id (str): ジョブのID
         db: データベースセッション
         
     Returns:
-        JobStatusResponseModel: ジョブの状態
+        JobSummaryResponseModel: ジョブのサマリー情報
         
     Raises:
         HTTPException: ジョブが見つからない場合
@@ -1181,29 +1275,14 @@ async def get_job_status(job_id: str, db: Session = Depends(get_db)):
             error_message=db_job.error_message
         )
     
-    # データベースから実行結果を取得
-    results = []
-    try:
-        db_results = db.query(DBJobResult).filter(DBJobResult.job_id == job_id).order_by(DBJobResult.request_number).all()
-        for db_result in db_results:
-            result = {
-                'request': {
-                    'request': db_result.request_content
-                },
-                'http_response': db_result.get_http_response()
-            }
-            results.append(result)
-    except Exception as e:
-        print(f"実行結果取得エラー: {e}")
-        # メモリ内の結果を使用
-        results = job.results or []
-    
-    return JobStatusResponseModel(
+    return JobSummaryResponseModel(
         job_id=job.id,
         status=job.status.value,
         progress=job.progress.to_dict(),
-        results=results,
-        error_message=job.error_message
+        error_message=job.error_message,
+        created_at=job.created_at.isoformat() if job.created_at else "",
+        updated_at=job.updated_at.isoformat() if job.updated_at else "",
+        request_id=job.request_id
     )
 
 @app.post("/api/jobs/{job_id}/stop")
@@ -1304,8 +1383,6 @@ async def cleanup_jobs(max_age_hours: int = 24):
         "max_age_hours": max_age_hours
     }
 
-
-
 @app.get("/test", response_class=HTMLResponse)
 async def test_page():
     """
@@ -1357,6 +1434,128 @@ async def history_page():
             return HTMLResponse(content=f.read())
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="履歴ページが見つかりません")
+
+@app.get("/api/jobs/{job_id}/results", response_model=JobResultsResponseModel)
+async def get_job_results(job_id: str, db: Session = Depends(get_db), limit: int = 50, offset: int = 0):
+    """
+    ジョブの結果リストを取得するエンドポイント（ページネーション付き）
+    
+    Args:
+        job_id (str): ジョブのID
+        db: データベースセッション
+        limit (int): 取得制限数（デフォルト: 50）
+        offset (int): オフセット（デフォルト: 0）
+        
+    Returns:
+        JobResultsResponseModel: ジョブの結果リスト
+        
+    Raises:
+        HTTPException: ジョブが見つからない場合
+    """
+    # ジョブの存在確認
+    job = job_manager.get_job(job_id)
+    if not job:
+        db_job = db_manager.get_job_by_id(db, job_id)
+        if not db_job:
+            raise HTTPException(status_code=404, detail="ジョブが見つかりません")
+    
+    try:
+        # データベースから結果を取得（ページネーション）
+        db_results = db.query(DBJobResult).filter(DBJobResult.job_id == job_id).order_by(DBJobResult.request_number).offset(offset).limit(limit).all()
+        
+        # 総数を取得
+        total_count = db.query(DBJobResult).filter(DBJobResult.job_id == job_id).count()
+        
+        # 結果サマリーを作成
+        results = []
+        for db_result in db_results:
+            http_response = db_result.get_http_response()
+            status_code = http_response.get('status_code') if http_response else None
+            url = http_response.get('url') if http_response else None
+            
+            result_summary = JobResultSummaryModel(
+                request_number=db_result.request_number,
+                placeholder=db_result.placeholder,
+                payload=db_result.payload,
+                position=db_result.position,
+                status_code=status_code,
+                success=db_result.success,
+                error_message=db_result.error_message,
+                elapsed_time=db_result.elapsed_time,
+                url=url
+            )
+            results.append(result_summary)
+        
+        has_more = offset + limit < total_count
+        
+        return JobResultsResponseModel(
+            job_id=job_id,
+            total_results=total_count,
+            results=results,
+            limit=limit,
+            offset=offset,
+            has_more=has_more
+        )
+        
+    except Exception as e:
+        print(f"結果取得エラー: {e}")
+        raise HTTPException(status_code=500, detail=f"結果取得エラー: {str(e)}")
+
+@app.get("/api/jobs/{job_id}/results/{result_id}", response_model=JobResultDetailResponseModel)
+async def get_job_result_detail(job_id: str, result_id: int, db: Session = Depends(get_db)):
+    """
+    ジョブの特定の結果詳細を取得するエンドポイント
+    
+    Args:
+        job_id (str): ジョブのID
+        result_id (int): 結果のID（request_number）
+        db: データベースセッション
+        
+    Returns:
+        JobResultDetailResponseModel: 結果の詳細
+        
+    Raises:
+        HTTPException: ジョブまたは結果が見つからない場合
+    """
+    # ジョブの存在確認
+    job = job_manager.get_job(job_id)
+    if not job:
+        db_job = db_manager.get_job_by_id(db, job_id)
+        if not db_job:
+            raise HTTPException(status_code=404, detail="ジョブが見つかりません")
+    
+    try:
+        # データベースから特定の結果を取得
+        db_result = db.query(DBJobResult).filter(
+            DBJobResult.job_id == job_id,
+            DBJobResult.request_number == result_id
+        ).first()
+        
+        if not db_result:
+            raise HTTPException(status_code=404, detail="結果が見つかりません")
+        
+        # 結果詳細を作成
+        result_detail = JobResultDetailResponseModel(
+            job_id=job_id,
+            request_number=db_result.request_number,
+            request_content=db_result.request_content,
+            placeholder=db_result.placeholder,
+            payload=db_result.payload,
+            position=db_result.position,
+            http_response=db_result.get_http_response(),
+            success=db_result.success,
+            error_message=db_result.error_message,
+            elapsed_time=db_result.elapsed_time,
+            created_at=db_result.created_at.isoformat() if db_result.created_at else ""
+        )
+        
+        return result_detail
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"結果詳細取得エラー: {e}")
+        raise HTTPException(status_code=500, detail=f"結果詳細取得エラー: {str(e)}")
 
 if __name__ == "__main__":
     # データベーステーブルを作成

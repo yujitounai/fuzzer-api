@@ -138,6 +138,9 @@ class JobResult(Base):
     job_id = Column(String(36), ForeignKey("jobs.id"), nullable=False, comment="元のジョブのID")
     request_number = Column(Integer, nullable=False, comment="リクエスト番号（順序）")
     request_content = Column(Text, nullable=False, comment="実行したリクエストの内容")
+    placeholder = Column(String(255), nullable=True, comment="使用されたプレースホルダ名")
+    payload = Column(Text, nullable=True, comment="使用されたペイロード")
+    position = Column(Integer, nullable=True, comment="プレースホルダの位置")
     http_response = Column(JSON, nullable=True, comment="HTTPレスポンス（JSON形式）")
     success = Column(Integer, nullable=False, default=0, comment="成功フラグ（0: 失敗, 1: 成功）")
     error_message = Column(Text, nullable=True, comment="エラーメッセージ")
@@ -435,6 +438,9 @@ class DatabaseManager:
                 job_id=job_id,
                 request_number=i + 1,
                 request_content=result.get('request', ''),
+                placeholder=result.get('placeholder'),
+                payload=result.get('payload'),
+                position=result.get('position'),
                 success=1 if is_success else 0,
                 error_message=http_response.get('error'),
                 elapsed_time=int(http_response.get('elapsed_time', 0) * 1000) if http_response.get('elapsed_time') else None
@@ -460,17 +466,31 @@ class DatabaseManager:
         Returns:
             List[dict]: 実行結果のリスト
         """
-        job_results = db.query(JobResult).filter(JobResult.job_id == job_id).order_by(JobResult.request_number).all()
-        
-        results = []
-        for job_result in job_results:
-            result = {
-                'request': job_result.request_content,
-                'http_response': job_result.get_http_response()
-            }
-            results.append(result)
-        
-        return results
+        try:
+            job_results = db.query(JobResult).filter(JobResult.job_id == job_id).order_by(JobResult.request_number).all()
+            
+            results = []
+            for job_result in job_results:
+                # プレースホルダ情報を安全に取得
+                placeholder = getattr(job_result, 'placeholder', None)
+                payload = getattr(job_result, 'payload', None) 
+                position = getattr(job_result, 'position', None)
+                
+                result = {
+                    'request': job_result.request_content,
+                    'placeholder': placeholder,
+                    'payload': payload,
+                    'position': position,
+                    'http_response': job_result.get_http_response()
+                }
+                results.append(result)
+            
+            return results
+            
+        except Exception as e:
+            print(f"ジョブ結果の取得でエラー: {e}")
+            # エラーが発生した場合は空のリストを返す
+            return []
     
     def get_job_statistics(self, db) -> dict:
         """

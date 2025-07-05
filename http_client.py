@@ -39,6 +39,7 @@ class HTTPResponse:
     url: str
     elapsed_time: float
     error: Optional[str] = None
+    actual_request: Optional[str] = None  # 実際に送信されたリクエスト
 
 class HTTPClient:
     """HTTPリクエスト送信クライアント"""
@@ -117,17 +118,23 @@ class HTTPClient:
         content_type = headers.get('Content-Type', '').lower()
         if 'multipart/form-data' in content_type:
             # 原文からボディ部分を抽出（改行を保持）
-            body_start_index = request_text.find('\n\n')
+            # 最初にCRLF（\r\n\r\n）をチェック
+            body_start_index = request_text.find('\r\n\r\n')
             if body_start_index != -1:
-                body = request_text[body_start_index + 2:]
+                body = request_text[body_start_index + 4:]
+                logger.info("multipart/form-data: CRLF形式でボディを抽出")
             else:
-                # 単一改行の場合も考慮
-                body_start_index = request_text.find('\r\n\r\n')
+                # 次にLF（\n\n）をチェック
+                body_start_index = request_text.find('\n\n')
                 if body_start_index != -1:
-                    body = request_text[body_start_index + 4:]
+                    body = request_text[body_start_index + 2:]
+                    # LFをCRLFに変換
+                    body = body.replace('\n', '\r\n')
+                    logger.info("multipart/form-data: LFをCRLFに変換")
                 else:
                     # 最後の手段として行ベースで処理
-                    body = '\n'.join(body_lines)
+                    body = '\r\n'.join(body_lines)
+                    logger.info("multipart/form-data: 行ベースでCRLF形式に変換")
         
         # Content-Lengthヘッダーがある場合、ボディの長さを検証（参考情報のみ）
         if 'Content-Length' in headers:
@@ -164,14 +171,14 @@ class HTTPClient:
     
     def ensure_multipart_body_format(self, body: str, content_type: str) -> str:
         """
-        multipart/form-dataのボディ形式を確認・修正（最小限の処理）
+        multipart/form-dataのボディ形式を確認（修正は最小限）
         
         Args:
             body (str): リクエストボディ
             content_type (str): Content-Typeヘッダー
             
         Returns:
-            str: 修正されたボディ
+            str: ボディ（可能な限り元のまま）
         """
         if 'multipart/form-data' not in content_type.lower():
             return body
@@ -179,30 +186,107 @@ class HTTPClient:
         # バウンダリーを抽出
         boundary_match = re.search(r'boundary=([^;]+)', content_type)
         if not boundary_match:
-            logger.warning("multipart/form-dataのバウンダリーが見つかりません")
+            logger.info("multipart/form-dataのバウンダリーが見つかりません - 元のボディをそのまま使用")
             return body
         
         boundary = boundary_match.group(1)
         final_boundary = f'--{boundary}--'
         
-        logger.info(f"Original body length: {len(body.encode('utf-8'))}")
+        logger.info(f"元のボディ長: {len(body.encode('utf-8'))} bytes")
+        logger.info(f"バウンダリー: {boundary}")
         
-        # 最終バウンダリーのチェックのみ行い、元のボディを最大限保持
-        if not body.rstrip().endswith(final_boundary):
-            logger.info("最終バウンダリーの確認")
-            
-            # 最小限の修正のみ実施
-            if body.rstrip().endswith(f'--{boundary}'):
-                # 最後が通常のバウンダリーの場合、最終バウンダリーに変更
-                body = body.rstrip()[:-len(f'--{boundary}')] + final_boundary
-                logger.info("最終バウンダリーを修正しました")
-            else:
-                # 元のボディをそのまま使用（ライブラリが適切に処理することを期待）
-                logger.info("元のボディをそのまま使用します")
+        # 最終バウンダリーのチェック（修正は行わない）
+        if body.rstrip().endswith(final_boundary):
+            logger.info("最終バウンダリー: 正しい形式")
+        elif body.rstrip().endswith(f'--{boundary}'):
+            logger.info("最終バウンダリー: 通常のバウンダリーで終了")
         else:
-            logger.info("最終バウンダリーは正しい形式です")
+            logger.info("最終バウンダリー: 不明な形式")
         
+        # 改行文字の確認
+        if '\r\n' in body:
+            logger.info("改行文字: CRLF形式")
+        elif '\n' in body:
+            logger.info("改行文字: LF形式")
+        
+        # 元のボディをそのまま返す（aiohttpに処理を委ねる）
+        logger.info("元のボディをそのまま使用します")
         return body
+    
+    def build_actual_request(self, method: str, url: str, headers: Dict[str, str], data: Optional[bytes]) -> str:
+        """
+        実際に送信されたリクエストを再構築
+        
+        Args:
+            method (str): HTTPメソッド
+            url (str): 完全なURL
+            headers (Dict[str, str]): 送信されたヘッダー
+            data (Optional[bytes]): 送信されたデータ
+            
+        Returns:
+            str: 実際のHTTPリクエスト文字列
+        """
+        try:
+            # URLからパス部分を抽出
+            from urllib.parse import urlparse
+            parsed_url = urlparse(url)
+            path = parsed_url.path
+            if parsed_url.query:
+                path += '?' + parsed_url.query
+            if parsed_url.fragment:
+                path += '#' + parsed_url.fragment
+            
+            # リクエスト行を構築
+            request_lines = [f"{method} {path} HTTP/1.1"]
+            
+            # ヘッダーを追加
+            actual_headers = headers.copy()
+            
+            # Content-Lengthを実際のデータサイズで計算
+            if data is not None:
+                if isinstance(data, bytes):
+                    actual_content_length = len(data)
+                elif isinstance(data, str):
+                    actual_content_length = len(data.encode('utf-8'))
+                else:
+                    actual_content_length = len(str(data).encode('utf-8'))
+                actual_headers['Content-Length'] = str(actual_content_length)
+                logger.info(f"実際のContent-Length: {actual_content_length}")
+            
+            # ヘッダーを追加
+            for key, value in actual_headers.items():
+                request_lines.append(f"{key}: {value}")
+            
+            # 空行を追加
+            request_lines.append("")
+            
+            # ボディを追加（ある場合）
+            if data is not None:
+                # データの型に応じて処理
+                if isinstance(data, bytes):
+                    # バイト型データの場合
+                    try:
+                        body_str = data.decode('utf-8')
+                        request_lines.append(body_str)
+                    except UnicodeDecodeError:
+                        # バイナリデータの場合
+                        request_lines.append(f"[Binary data: {len(data)} bytes]")
+                elif isinstance(data, str):
+                    # 文字列型データの場合
+                    request_lines.append(data)
+                else:
+                    # その他の型の場合
+                    request_lines.append(str(data))
+            
+            # 改行で結合
+            actual_request = '\n'.join(request_lines)
+            
+            logger.info(f"実際のリクエストを再構築: {len(actual_request)} characters")
+            return actual_request
+            
+        except Exception as e:
+            logger.error(f"実際のリクエスト再構築エラー: {e}")
+            return f"[リクエスト再構築エラー: {e}]"
     
     async def send_request(self, request_text: str, config: HTTPRequestConfig = None) -> HTTPResponse:
         """
@@ -270,19 +354,36 @@ class HTTPClient:
             
             # ボディの処理
             data = None
-            if parsed["body"]:
+            # GETリクエストやHEADリクエストの場合はボディを設定しない
+            if parsed["body"] and parsed["method"].upper() not in ['GET', 'HEAD']:
                 # Content-Typeヘッダーに基づいてボディを処理
                 content_type = headers.get('Content-Type', '').lower()
                 
                 if 'multipart/form-data' in content_type:
-                    # multipart/form-dataの場合は最小限の処理にとどめる
-                    body = self.ensure_multipart_body_format(parsed["body"], content_type)
+                    # multipart/form-dataの場合は元のボディをできるだけそのまま使用
+                    original_body = parsed["body"]
+                    
+                    # Content-Typeヘッダーにboundaryが含まれているか確認
+                    logger.info(f"Content-Typeヘッダー: {headers.get('Content-Type', 'N/A')}")
+                    logger.info(f"元のボディサイズ: {len(original_body.encode('utf-8'))} bytes")
+                    
+                    # 改行文字の状況を確認
+                    has_crlf = '\r\n' in original_body
+                    has_lf = '\n' in original_body
+                    logger.info(f"改行文字の状況: CRLF={has_crlf}, LF={has_lf}")
+                    
+                    # multipart/form-dataの最終バウンダリーのみチェック
+                    body = self.ensure_multipart_body_format(original_body, content_type)
                     
                     # データはbytesとして処理
                     data = body.encode('utf-8')
                     
-                    logger.info(f"multipart/form-data処理: ボディサイズ={len(data)} bytes")
+                    logger.info(f"multipart/form-data処理: 最終ボディサイズ={len(data)} bytes")
                     logger.info("Content-Lengthはライブラリが自動計算します")
+                    
+                    # データの先頭と末尾を確認
+                    logger.info(f"データの先頭: {repr(data[:150])}")
+                    logger.info(f"データの末尾: {repr(data[-150:])}")
                     
                 elif 'application/json' in content_type:
                     try:
@@ -294,39 +395,97 @@ class HTTPClient:
                 else:
                     data = parsed["body"]
             
+            # 送信前にデバッグ情報を出力
+            logger.info(f"送信予定のURL: {url}")
+            logger.info(f"送信予定のメソッド: {parsed['method']}")
+            logger.info(f"送信予定のヘッダー: {headers}")
+            if data:
+                logger.info(f"送信予定のデータタイプ: {type(data)}")
+                logger.info(f"送信予定のデータサイズ: {len(data) if isinstance(data, (str, bytes)) else 'N/A'}")
+                if isinstance(data, str) and len(data) < 500:
+                    logger.info(f"送信予定のデータ内容: {repr(data[:200])}")
+                elif isinstance(data, bytes) and len(data) < 500:
+                    logger.info(f"送信予定のデータ内容: {repr(data[:200])}")
+            
             # リクエストを送信
             start_time = asyncio.get_event_loop().time()
             
-            async with self.session.request(
-                method=parsed["method"],
-                url=url,
-                headers=headers,
-                data=data,
-                timeout=aiohttp.ClientTimeout(total=config.timeout),
-                allow_redirects=config.follow_redirects
-            ) as response:
+            # multipart/form-dataの場合は特別な処理
+            request_kwargs = {
+                "method": parsed["method"],
+                "url": url,
+                "headers": headers,
+                "timeout": aiohttp.ClientTimeout(total=config.timeout),
+                "allow_redirects": config.follow_redirects
+            }
+            
+            # Content-Typeに基づいてデータの渡し方を調整
+            content_type = headers.get('Content-Type', '').lower()
+            if 'multipart/form-data' in content_type and data:
+                # multipart/form-dataの場合は、aiohttpの自動処理を避けるためにdataパラメータを使用
+                request_kwargs["data"] = data
+                logger.info("multipart/form-dataとしてdataパラメータで送信")
+            elif data:
+                request_kwargs["data"] = data
+                logger.info("通常のデータとして送信")
+            
+            async with self.session.request(**request_kwargs) as response:
                 elapsed_time = asyncio.get_event_loop().time() - start_time
                 
                 # レスポンスボディを読み取り
                 body = await response.text()
+                
+                # 実際に送信されたリクエストを再構築
+                actual_request = self.build_actual_request(
+                    method=parsed["method"],
+                    url=url,
+                    headers=headers,
+                    data=data
+                )
                 
                 return HTTPResponse(
                     status_code=response.status,
                     headers=dict(response.headers),
                     body=body,
                     url=str(response.url),
-                    elapsed_time=elapsed_time
+                    elapsed_time=elapsed_time,
+                    actual_request=actual_request
                 )
                 
         except Exception as e:
             logger.error(f"リクエスト送信エラー: {e}")
+            
+            # エラーの場合でも実際のリクエストを記録（可能な限り）
+            actual_request = "[エラーにより実際のリクエストを記録できませんでした]"
+            try:
+                # エラーでも可能な限りリクエストを再構築
+                parsed = self.parse_http_request(request_text)
+                url = f"{config.scheme}://{config.base_url}{parsed['url']}"
+                headers = parsed["headers"]
+                
+                # ボディの処理
+                data = None
+                if parsed["body"]:
+                    data = parsed["body"].encode('utf-8')
+                
+                actual_request = self.build_actual_request(
+                    method=parsed["method"],
+                    url=url,
+                    headers=headers,
+                    data=data
+                )
+            except Exception as inner_e:
+                logger.error(f"実際のリクエスト再構築エラー: {inner_e}")
+                actual_request = f"[リクエスト再構築エラー: {inner_e}]"
+            
             return HTTPResponse(
                 status_code=0,
                 headers={},
                 body="",
                 url="",
                 elapsed_time=0,
-                error=str(e)
+                error=str(e),
+                actual_request=actual_request
             )
     
     async def send_multiple_requests(self, requests: List[str], config: HTTPRequestConfig = None) -> List[HTTPResponse]:
@@ -413,32 +572,42 @@ class RequestExecutor:
             # 結果を結合
             results = []
             for i, (request, response) in enumerate(zip(requests, responses)):
+                print(f"DEBUG: RequestExecutor - リクエスト {i+1} データ: {request}")
                 if isinstance(response, Exception):
                     # エラーの場合
                     result = {
-                        **request,
+                        "request": request.get("request", ""),
+                        "placeholder": request.get("placeholder", ""),
+                        "payload": request.get("payload", ""),
+                        "position": request.get("position", 0),
                         "http_response": {
                             "status_code": 0,
                             "headers": {},
                             "body": "",
                             "url": "",
                             "elapsed_time": 0,
-                            "error": str(response)
+                            "error": str(response),
+                            "actual_request": None
                         }
                     }
                 else:
                     # 正常な場合
                     result = {
-                        **request,
+                        "request": request.get("request", ""),
+                        "placeholder": request.get("placeholder", ""),
+                        "payload": request.get("payload", ""),
+                        "position": request.get("position", 0),
                         "http_response": {
                             "status_code": response.status_code,
                             "headers": response.headers,
                             "body": response.body,
                             "url": response.url,
                             "elapsed_time": response.elapsed_time,
-                            "error": response.error
+                            "error": response.error,
+                            "actual_request": response.actual_request
                         }
                     }
+                print(f"DEBUG: RequestExecutor - 結果データ: {result}")
                 results.append(result)
             
             return results 

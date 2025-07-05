@@ -701,14 +701,18 @@ class JobManager:
                 try:
                     response = await client.send_request(request["request"], config)
                     result = {
-                        **request,
+                        "request": request.get("request", ""),
+                        "placeholder": request.get("placeholder", ""),
+                        "payload": request.get("payload", ""),
+                        "position": request.get("position", 0),
                         "http_response": {
                             "status_code": response.status_code,
                             "headers": response.headers,
                             "body": response.body,
                             "url": response.url,
                             "elapsed_time": response.elapsed_time,
-                            "error": response.error
+                            "error": response.error,
+                            "actual_request": response.actual_request
                         }
                     }
                     results.append(result)
@@ -738,7 +742,10 @@ class JobManager:
                 except Exception as e:
                     print(f"同期実行: リクエスト {i+1} エラー - {str(e)}")
                     result = {
-                        **request,
+                        "request": request.get("request", ""),
+                        "placeholder": request.get("placeholder", ""),
+                        "payload": request.get("payload", ""),
+                        "position": request.get("position", 0),
                         "http_response": {
                             "status_code": 0,
                             "headers": {},

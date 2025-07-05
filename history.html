@@ -39,6 +39,108 @@
             word-break: break-all;
             white-space: pre-wrap;
         }
+        
+        /* テーブルセル幅制限 */
+        .table td {
+            vertical-align: middle;
+        }
+        
+        .payload-cell {
+            max-width: 200px;
+            word-break: break-all;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .url-cell {
+            max-width: 250px;
+            word-break: break-all;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .error-cell {
+            max-width: 150px;
+            word-break: break-all;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        /* ツールチップ用のスタイル */
+        [data-bs-toggle="tooltip"] {
+            cursor: help;
+        }
+        
+        /* テーブル全体の幅制限 */
+        .table-responsive .table {
+            min-width: 800px;
+        }
+        
+        .table thead th {
+            white-space: nowrap;
+        }
+        
+        /* リクエスト詳細モーダル内のスタイル */
+        .modal-xl .table td:nth-child(2) {
+            max-width: 300px;
+            word-break: break-all;
+            overflow: hidden;
+        }
+        
+        .modal-xl .table td code {
+            max-width: 100%;
+            white-space: pre-wrap;
+            word-break: break-all;
+            display: block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        /* preコードエリアのスタイル改善 */
+        .modal-xl pre {
+            max-height: 400px;
+            overflow-y: auto;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        
+        .modal-xl pre code {
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        
+        /* 長いペイロード用のスタイル */
+        .payload-display {
+            max-width: 250px;
+            word-break: break-all;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            display: inline-block;
+        }
+        
+        /* リクエスト詳細とレスポンス詳細のpreエリア */
+        .request-detail-pre {
+            max-height: 400px;
+            overflow-y: auto;
+            overflow-x: auto;
+            white-space: pre;
+            font-size: 0.9em;
+            line-height: 1.4;
+        }
+        
+        .response-detail-pre {
+            max-height: 300px;
+            overflow-y: auto;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            font-size: 0.85em;
+            line-height: 1.3;
+        }
     </style>
 </head>
 <body>
@@ -407,6 +509,9 @@
         let currentPage = 0;
         let currentLimit = 50;
         let totalPages = 1;
+        let currentRequestData = null; // 現在のリクエストデータ
+        let currentOriginalRequest = null; // 元のリクエスト
+        let currentActualRequest = null; // 実際のリクエスト
 
         // ページ読み込み時に初期データを取得
         document.addEventListener('DOMContentLoaded', function() {
@@ -454,6 +559,62 @@
                 window.singleExecutionMode = null;
             });
         });
+
+        // タブ切り替え機能
+        function showOriginalRequest() {
+            setActiveTab('original');
+            const requestContent = document.getElementById('requestContent');
+            if (requestContent && currentOriginalRequest) {
+                requestContent.textContent = currentOriginalRequest;
+            }
+        }
+        
+        function showActualRequest() {
+            setActiveTab('actual');
+            const requestContent = document.getElementById('requestContent');
+            if (requestContent) {
+                if (currentActualRequest) {
+                    requestContent.textContent = currentActualRequest;
+                } else {
+                    requestContent.textContent = '実際のリクエスト情報がありません。';
+                }
+            }
+        }
+        
+        function setActiveTab(tab) {
+            const originalTab = document.getElementById('originalRequestTab');
+            const actualTab = document.getElementById('actualRequestTab');
+            
+            if (tab === 'original') {
+                if (originalTab) {
+                    originalTab.classList.remove('btn-outline-primary');
+                    originalTab.classList.add('btn-primary');
+                }
+                if (actualTab) {
+                    actualTab.classList.remove('btn-success');
+                    actualTab.classList.add('btn-outline-success');
+                }
+            } else {
+                if (originalTab) {
+                    originalTab.classList.remove('btn-primary');
+                    originalTab.classList.add('btn-outline-primary');
+                }
+                if (actualTab) {
+                    actualTab.classList.remove('btn-outline-success');
+                    actualTab.classList.add('btn-success');
+                }
+            }
+            
+            // 実際のリクエストがない場合は、actualタブを無効化
+            if (actualTab) {
+                if (currentActualRequest) {
+                    actualTab.disabled = false;
+                } else {
+                    actualTab.disabled = true;
+                    actualTab.title = '実際のリクエスト情報がありません';
+                }
+            }
+        }
 
         // 統計情報を読み込み
         async function loadStatistics() {
@@ -846,12 +1007,27 @@
                         clearInterval(pollInterval);
                         
                         if (job.status === 'completed') {
-                            showExecutionResults({
-                                total_requests: job.progress.total_requests,
-                                successful_requests: job.progress.successful_requests,
-                                failed_requests: job.progress.failed_requests,
-                                results: job.results || []
-                            });
+                            // 結果データを取得して表示
+                            try {
+                                const resultsResponse = await fetch(`/api/jobs/${jobId}/results`);
+                                const resultsData = await resultsResponse.json();
+                                
+                                showExecutionResults({
+                                    total_requests: job.progress.total_requests,
+                                    successful_requests: job.progress.successful_requests,
+                                    failed_requests: job.progress.failed_requests,
+                                    results: resultsData.results || []
+                                });
+                            } catch (error) {
+                                console.error('結果データの取得に失敗しました:', error);
+                                resultsDiv.innerHTML = `
+                                    <div class="alert alert-warning">
+                                        <h5><i class="fas fa-exclamation-triangle"></i> ジョブ完了</h5>
+                                        <p>ジョブは完了しましたが、結果データの取得に失敗しました。履歴ページで結果を確認してください。</p>
+                                        <small>ジョブID: ${jobId}</small>
+                                    </div>
+                                `;
+                            }
                         } else {
                             resultsDiv.innerHTML = `
                                 <div class="alert alert-danger">
@@ -1393,134 +1569,110 @@
             }
         }
 
+        // JSONからHTTPリクエストを構築する関数
+        function buildHttpRequest(requestData) {
+            console.log('buildHttpRequest called with:', requestData);
+            console.log('buildHttpRequest type:', typeof requestData);
+            
+            // 文字列の場合はそのまま返す
+            if (typeof requestData === 'string') {
+                console.log('Returning string as-is');
+                return requestData;
+            }
+            
+            // オブジェクトの場合
+            if (typeof requestData === 'object' && requestData !== null) {
+                console.log('Processing object:', requestData);
+                
+                // 直接HTTPリクエストの形式が含まれているか確認
+                if (requestData.request && typeof requestData.request === 'string') {
+                    console.log('Found nested request string');
+                    return requestData.request;
+                }
+                
+                // パースされたHTTPリクエストオブジェクトの場合
+                if (requestData.method || requestData.url || requestData.path) {
+                    console.log('Building HTTP request from parsed object');
+                    let requestText = '';
+                    
+                    // method, url, version
+                    const method = requestData.method || 'GET';
+                    const url = requestData.url || requestData.path || '/';
+                    const version = requestData.version || requestData.http_version || 'HTTP/1.1';
+                    requestText += `${method} ${url} ${version}\n`;
+                    
+                    // headers
+                    if (requestData.headers && typeof requestData.headers === 'object') {
+                        for (const [key, value] of Object.entries(requestData.headers)) {
+                            requestText += `${key}: ${value}\n`;
+                        }
+                    }
+                    
+                    // 空行でヘッダーとボディを分離
+                    requestText += '\n';
+                    
+                    // body
+                    if (requestData.body) {
+                        requestText += requestData.body;
+                    }
+                    
+                    return requestText;
+                }
+                
+                // それ以外のオブジェクトは JSON として表示
+                console.log('Returning JSON string');
+                return JSON.stringify(requestData, null, 2);
+            }
+            
+            // その他の場合
+            console.log('Returning fallback JSON string');
+            return JSON.stringify(requestData, null, 2);
+        }
+
         async function showRequestDetail(jobId, requestIndex) {
             try {
                 const response = await fetch(`/api/jobs/${jobId}`);
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
-                
                 const job = await response.json();
                 
                 if (!job.results || requestIndex >= job.results.length) {
-                    alert('リクエスト詳細が見つかりません。');
-                    return;
+                    throw new Error('リクエストが見つかりません');
                 }
                 
                 const result = job.results[requestIndex];
-                const httpResponse = result.http_response || {};
+                const httpResponse = result.http_response;
                 
-                // デバッグ用：結果オブジェクトをコンソールに出力
-                console.log('Full result object:', result);
-                console.log('Request type:', typeof result.request);
-                console.log('Request content:', result.request);
-                console.log('Available keys:', Object.keys(result));
-                console.log('Request is string?', typeof result.request === 'string');
-                console.log('Request is object?', typeof result.request === 'object');
-                if (typeof result.request === 'string') {
-                    console.log('Request string length:', result.request.length);
-                    console.log('Request starts with:', result.request.substring(0, 100));
-                }
-                if (typeof result.request === 'object' && result.request !== null) {
-                    console.log('Request object keys:', Object.keys(result.request));
-                    console.log('Request object structure:', result.request);
-                }
+                // 結果データから直接プレースホルダ情報を取得
+                let placeholderInfo = {
+                    placeholder: result.placeholder || 'N/A',
+                    payload: result.payload || 'N/A',
+                    position: result.position !== undefined ? result.position : 'N/A'
+                };
                 
-                // JSONからHTTPリクエストを構築する関数
-                function buildHttpRequest(requestData) {
-                    console.log('buildHttpRequest called with:', requestData);
-                    console.log('buildHttpRequest type:', typeof requestData);
-                    
-                    // 文字列の場合はそのまま返す
-                    if (typeof requestData === 'string') {
-                        console.log('Returning string as-is');
-                        return requestData;
-                    }
-                    
-                    // オブジェクトの場合
-                    if (typeof requestData === 'object' && requestData !== null) {
-                        console.log('Processing object:', requestData);
+                // 結果データにプレースホルダ情報がない場合のみAPIを呼び出し
+                if (placeholderInfo.placeholder === 'N/A' && placeholderInfo.payload === 'N/A' && placeholderInfo.position === 'N/A' && job.request_id) {
+                    try {
+                        const requestDataResponse = await fetch(`/api/history/${job.request_id}`);
+                        const requestData = await requestDataResponse.json();
                         
-                        // 直接HTTPリクエストの形式が含まれているか確認
-                        if (requestData.request && typeof requestData.request === 'string') {
-                            console.log('Found nested request string');
-                            return requestData.request;
+                        if (requestData.requests && requestIndex < requestData.requests.length) {
+                            const originalRequest = requestData.requests[requestIndex];
+                            placeholderInfo = {
+                                placeholder: originalRequest.placeholder || 'N/A',
+                                payload: originalRequest.payload || 'N/A',
+                                position: originalRequest.position !== undefined ? originalRequest.position : 'N/A'
+                            };
                         }
-                        
-                        // パースされたHTTPリクエストオブジェクトの場合
-                        if (requestData.method || requestData.url || requestData.path) {
-                            console.log('Building HTTP request from parsed object');
-                            let requestText = '';
-                            
-                            // method, url, version
-                            const method = requestData.method || 'GET';
-                            const url = requestData.url || requestData.path || '/';
-                            const version = requestData.version || requestData.http_version || 'HTTP/1.1';
-                            requestText += `${method} ${url} ${version}\\n`;
-                            
-                            // headers
-                            if (requestData.headers && typeof requestData.headers === 'object') {
-                                for (const [key, value] of Object.entries(requestData.headers)) {
-                                    requestText += `${key}: ${value}\\n`;
-                                }
-                            }
-                            
-                            // 空行でヘッダーとボディを分離
-                            requestText += '\\n';
-                            
-                            // body
-                            if (requestData.body) {
-                                requestText += requestData.body;
-                            }
-                            
-                            return requestText;
-                        }
-                        
-                        // それ以外のオブジェクトは JSON として表示
-                        console.log('Returning JSON string');
-                        return JSON.stringify(requestData, null, 2);
+                    } catch (error) {
+                        console.warn('元のリクエストデータの取得に失敗しました:', error);
                     }
-                    
-                    // その他の場合
-                    console.log('Returning fallback JSON string');
-                    return JSON.stringify(requestData, null, 2);
                 }
                 
-                // プレースホルダ情報を抽出する関数
-                function getPlaceholderInfo(result) {
-                    // 直接のプロパティを確認
-                    if (result.placeholder !== undefined || result.payload !== undefined || result.position !== undefined) {
-                        return {
-                            placeholder: result.placeholder,
-                            payload: result.payload,
-                            position: result.position
-                        };
-                    }
-                    
-                    // request_infoやrequest_detailsなどのネストしたオブジェクトを確認
-                    const possibleKeys = ['request_info', 'request_details', 'details', 'metadata'];
-                    for (const key of possibleKeys) {
-                        if (result[key] && typeof result[key] === 'object') {
-                            const nested = result[key];
-                            if (nested.placeholder !== undefined || nested.payload !== undefined || nested.position !== undefined) {
-                                return {
-                                    placeholder: nested.placeholder,
-                                    payload: nested.payload,
-                                    position: nested.position
-                                };
-                            }
-                        }
-                    }
-                    
-                    return {
-                        placeholder: 'N/A',
-                        payload: 'N/A',
-                        position: 'N/A'
-                    };
-                }
-                
-                const placeholderInfo = getPlaceholderInfo(result);
                 const requestContent = buildHttpRequest(result.request);
+                
+                // 現在のリクエストデータを保存
+                currentRequestData = result;
+                currentOriginalRequest = requestContent;
+                currentActualRequest = httpResponse.actual_request || null;
                 
                 const requestDetailContent = document.getElementById('request-detail-content');
                 requestDetailContent.innerHTML = `
@@ -1538,15 +1690,24 @@
                                                 <tr><th>プレースホルダ:</th><td><code>${placeholderInfo.placeholder}</code></td></tr>
                                                 <tr><th>ペイロード:</th><td><code>${placeholderInfo.payload}</code></td></tr>
                                                 <tr><th>位置:</th><td>${placeholderInfo.position}</td></tr>
-                                                <tr><th>データ構造:</th><td><pre style="font-size: 0.8em; max-height: 100px; overflow-y: auto;">${JSON.stringify(result, null, 2)}</pre></td></tr>
                                             </table>
                                         </div>
                                     </div>
                                     
                                     <div class="mb-3">
                                         <label class="form-label">リクエスト内容:</label>
+                                        <div class="mb-2">
+                                            <div class="btn-group" role="group">
+                                                <button class="btn btn-sm btn-outline-primary" id="originalRequestTab" onclick="showOriginalRequest()">
+                                                    <i class="fas fa-file-code"></i> 元のリクエスト
+                                                </button>
+                                                <button class="btn btn-sm btn-outline-success" id="actualRequestTab" onclick="showActualRequest()">
+                                                    <i class="fas fa-paper-plane"></i> 実際のリクエスト
+                                                </button>
+                                            </div>
+                                        </div>
                                         <div class="border p-2" style="max-height: 400px; overflow-y: auto;">
-                                            <pre style="white-space: pre-wrap; font-size: 0.85em;">${escapeHtml(requestContent)}</pre>
+                                            <pre id="requestContent" style="white-space: pre-wrap; font-size: 0.85em;">${escapeHtml(requestContent)}</pre>
                                         </div>
                                     </div>
                                 </div>
@@ -1609,6 +1770,378 @@
                     </div>
                 `;
                 
+                // 初期状態を設定（実際のリクエストがある場合は優先表示）
+                if (currentActualRequest) {
+                    setActiveTab('actual');
+                    document.getElementById('requestContent').textContent = currentActualRequest;
+                } else {
+                    setActiveTab('original');
+                }
+                
+                const modal = new bootstrap.Modal(document.getElementById('requestDetailModal'));
+                modal.show();
+            } catch (error) {
+                console.error('リクエスト詳細の取得に失敗しました:', error);
+                alert('リクエスト詳細の取得に失敗しました。');
+            }
+        }
+
+        // 新しいAPI構造に対応したリクエスト詳細表示
+        async function showRequestDetailNew(jobId, requestNumber) {
+            try {
+                const response = await fetch(`/api/jobs/${jobId}/results/${requestNumber}`);
+                const result = await response.json();
+                
+                const httpResponse = result.http_response || {};
+                
+                // プレースホルダ情報を取得
+                let placeholderInfo = {
+                    placeholder: result.placeholder || 'N/A',
+                    payload: result.payload || 'N/A',
+                    position: result.position !== undefined ? result.position : 'N/A'
+                };
+                
+                const requestContent = result.request_content;
+                
+                // 現在のリクエストデータを保存
+                currentRequestData = result;
+                currentOriginalRequest = requestContent;
+                currentActualRequest = httpResponse.actual_request || null;
+                
+                const requestDetailContent = document.getElementById('request-detail-content');
+                // DOM操作で安全にコンテンツを作成
+                requestDetailContent.innerHTML = ''; // 一旦クリア
+                
+                // メイン情報セクション
+                const mainInfoRow = document.createElement('div');
+                mainInfoRow.className = 'row mb-3';
+                
+                // プレースホルダ情報セクション
+                const placeholderCol = document.createElement('div');
+                placeholderCol.className = 'col-md-6';
+                
+                const placeholderTitle = document.createElement('h6');
+                placeholderTitle.textContent = 'プレースホルダ情報';
+                placeholderCol.appendChild(placeholderTitle);
+                
+                const placeholderTable = document.createElement('table');
+                placeholderTable.className = 'table table-sm';
+                
+                const placeholderData = [
+                    ['プレースホルダ:', placeholderInfo.placeholder],
+                    ['ペイロード:', placeholderInfo.payload],
+                    ['位置:', placeholderInfo.position]
+                ];
+                
+                placeholderData.forEach(([label, value]) => {
+                    const tr = document.createElement('tr');
+                    const tdLabel = document.createElement('td');
+                    tdLabel.textContent = label;
+                    const tdValue = document.createElement('td');
+                    
+                    if (label === 'ペイロード:' && value !== 'N/A' && value.length > 50) {
+                        // 長いペイロードの場合は省略表示
+                        const shortValue = value.substring(0, 40) + '...';
+                        
+                        const payloadDiv = document.createElement('div');
+                        payloadDiv.className = 'payload-display';
+                        payloadDiv.setAttribute('data-bs-toggle', 'tooltip');
+                        payloadDiv.setAttribute('data-bs-placement', 'top');
+                        payloadDiv.setAttribute('title', value);
+                        
+                        const code = document.createElement('code');
+                        code.textContent = shortValue;
+                        payloadDiv.appendChild(code);
+                        tdValue.appendChild(payloadDiv);
+                    } else {
+                        // 通常表示
+                        const code = document.createElement('code');
+                        code.textContent = value;
+                        tdValue.appendChild(code);
+                    }
+                    
+                    tr.appendChild(tdLabel);
+                    tr.appendChild(tdValue);
+                    placeholderTable.appendChild(tr);
+                });
+                
+                placeholderCol.appendChild(placeholderTable);
+                mainInfoRow.appendChild(placeholderCol);
+                
+                // 実行結果セクション
+                const resultCol = document.createElement('div');
+                resultCol.className = 'col-md-6';
+                
+                const resultTitle = document.createElement('h6');
+                resultTitle.textContent = '実行結果';
+                resultCol.appendChild(resultTitle);
+                
+                const resultTable = document.createElement('table');
+                resultTable.className = 'table table-sm';
+                
+                const resultData = [
+                    ['ステータスコード:', httpResponse.status_code || 'N/A', httpResponse.status_code >= 200 && httpResponse.status_code < 400 ? 'text-success' : 'text-danger'],
+                    ['レスポンス時間:', result.elapsed_time ? result.elapsed_time.toFixed(3) + 's' : 'N/A'],
+                    ['URL:', httpResponse.url || 'N/A'],
+                    ['エラー:', result.error_message || httpResponse.error || 'なし', 'text-danger']
+                ];
+                
+                resultData.forEach(([label, value, className]) => {
+                    const tr = document.createElement('tr');
+                    const tdLabel = document.createElement('td');
+                    tdLabel.textContent = label;
+                    const tdValue = document.createElement('td');
+                    
+                    if (label === 'URL:' && value.length > 60) {
+                        // 長いURLの場合は省略表示
+                        const shortValue = value.substring(0, 50) + '...';
+                        
+                        const urlDiv = document.createElement('div');
+                        urlDiv.className = 'payload-display';
+                        urlDiv.setAttribute('data-bs-toggle', 'tooltip');
+                        urlDiv.setAttribute('data-bs-placement', 'top');
+                        urlDiv.setAttribute('title', value);
+                        
+                        const small = document.createElement('small');
+                        small.textContent = shortValue;
+                        urlDiv.appendChild(small);
+                        tdValue.appendChild(urlDiv);
+                    } else if (label === 'URL:') {
+                        const small = document.createElement('small');
+                        small.textContent = value;
+                        tdValue.appendChild(small);
+                    } else if (label === 'エラー:' && value !== 'なし' && value.length > 50) {
+                        // 長いエラーメッセージの場合は省略表示
+                        const shortValue = value.substring(0, 40) + '...';
+                        
+                        const errorDiv = document.createElement('div');
+                        errorDiv.className = 'payload-display';
+                        errorDiv.setAttribute('data-bs-toggle', 'tooltip');
+                        errorDiv.setAttribute('data-bs-placement', 'top');
+                        errorDiv.setAttribute('title', value);
+                        
+                        const span = document.createElement('span');
+                        span.textContent = shortValue;
+                        if (className) span.className = className;
+                        errorDiv.appendChild(span);
+                        tdValue.appendChild(errorDiv);
+                    } else {
+                        const span = document.createElement('span');
+                        span.textContent = value;
+                        if (className) span.className = className;
+                        tdValue.appendChild(span);
+                    }
+                    
+                    tr.appendChild(tdLabel);
+                    tr.appendChild(tdValue);
+                    resultTable.appendChild(tr);
+                });
+                
+                resultCol.appendChild(resultTable);
+                mainInfoRow.appendChild(resultCol);
+                requestDetailContent.appendChild(mainInfoRow);
+                
+                // タブセクション
+                const tabRow = document.createElement('div');
+                tabRow.className = 'row';
+                
+                const tabCol = document.createElement('div');
+                tabCol.className = 'col-12';
+                
+                // タブナビゲーション
+                const tabNav = document.createElement('ul');
+                tabNav.className = 'nav nav-tabs';
+                tabNav.id = 'request-tabs';
+                tabNav.setAttribute('role', 'tablist');
+                
+                // 元のリクエストタブ
+                const originalTabLi = document.createElement('li');
+                originalTabLi.className = 'nav-item';
+                originalTabLi.setAttribute('role', 'presentation');
+                
+                const originalTabBtn = document.createElement('button');
+                originalTabBtn.className = 'nav-link active';
+                originalTabBtn.id = 'original-tab';
+                originalTabBtn.setAttribute('data-bs-toggle', 'tab');
+                originalTabBtn.setAttribute('data-bs-target', '#original-request');
+                originalTabBtn.setAttribute('type', 'button');
+                originalTabBtn.setAttribute('role', 'tab');
+                
+                const originalIcon = document.createElement('i');
+                originalIcon.className = 'fas fa-file-alt';
+                originalTabBtn.appendChild(originalIcon);
+                originalTabBtn.appendChild(document.createTextNode(' 元のリクエスト'));
+                
+                originalTabLi.appendChild(originalTabBtn);
+                tabNav.appendChild(originalTabLi);
+                
+                // 実際のリクエストタブ（条件付き）
+                if (currentActualRequest) {
+                    const actualTabLi = document.createElement('li');
+                    actualTabLi.className = 'nav-item';
+                    actualTabLi.setAttribute('role', 'presentation');
+                    
+                    const actualTabBtn = document.createElement('button');
+                    actualTabBtn.className = 'nav-link';
+                    actualTabBtn.id = 'actual-tab';
+                    actualTabBtn.setAttribute('data-bs-toggle', 'tab');
+                    actualTabBtn.setAttribute('data-bs-target', '#actual-request');
+                    actualTabBtn.setAttribute('type', 'button');
+                    actualTabBtn.setAttribute('role', 'tab');
+                    
+                    const actualIcon = document.createElement('i');
+                    actualIcon.className = 'fas fa-share';
+                    actualTabBtn.appendChild(actualIcon);
+                    actualTabBtn.appendChild(document.createTextNode(' 実際のリクエスト'));
+                    
+                    actualTabLi.appendChild(actualTabBtn);
+                    tabNav.appendChild(actualTabLi);
+                }
+                
+                // レスポンスタブ
+                const responseTabLi = document.createElement('li');
+                responseTabLi.className = 'nav-item';
+                responseTabLi.setAttribute('role', 'presentation');
+                
+                const responseTabBtn = document.createElement('button');
+                responseTabBtn.className = 'nav-link';
+                responseTabBtn.id = 'response-tab';
+                responseTabBtn.setAttribute('data-bs-toggle', 'tab');
+                responseTabBtn.setAttribute('data-bs-target', '#response-content');
+                responseTabBtn.setAttribute('type', 'button');
+                responseTabBtn.setAttribute('role', 'tab');
+                
+                const responseIcon = document.createElement('i');
+                responseIcon.className = 'fas fa-reply';
+                responseTabBtn.appendChild(responseIcon);
+                responseTabBtn.appendChild(document.createTextNode(' レスポンス'));
+                
+                responseTabLi.appendChild(responseTabBtn);
+                tabNav.appendChild(responseTabLi);
+                
+                tabCol.appendChild(tabNav);
+                
+                // タブコンテンツ
+                const tabContent = document.createElement('div');
+                tabContent.className = 'tab-content';
+                tabContent.id = 'request-tab-content';
+                
+                // 元のリクエストタブコンテンツ
+                const originalTabPane = document.createElement('div');
+                originalTabPane.className = 'tab-pane fade show active';
+                originalTabPane.id = 'original-request';
+                originalTabPane.setAttribute('role', 'tabpanel');
+                
+                const originalDiv = document.createElement('div');
+                originalDiv.className = 'mt-3';
+                
+                const originalTitle = document.createElement('h6');
+                originalTitle.textContent = 'リクエスト内容';
+                originalDiv.appendChild(originalTitle);
+                
+                const originalPre = document.createElement('pre');
+                originalPre.className = 'bg-light p-3 rounded request-detail-pre';
+                const originalCode = document.createElement('code');
+                originalCode.textContent = requestContent || 'リクエスト内容がありません';
+                originalPre.appendChild(originalCode);
+                originalDiv.appendChild(originalPre);
+                
+                originalTabPane.appendChild(originalDiv);
+                tabContent.appendChild(originalTabPane);
+                
+                // 実際のリクエストタブコンテンツ（条件付き）
+                if (currentActualRequest) {
+                    const actualTabPane = document.createElement('div');
+                    actualTabPane.className = 'tab-pane fade';
+                    actualTabPane.id = 'actual-request';
+                    actualTabPane.setAttribute('role', 'tabpanel');
+                    
+                    const actualDiv = document.createElement('div');
+                    actualDiv.className = 'mt-3';
+                    
+                    const actualTitle = document.createElement('h6');
+                    actualTitle.textContent = '実際に送信されたリクエスト';
+                    actualDiv.appendChild(actualTitle);
+                    
+                    const actualPre = document.createElement('pre');
+                    actualPre.className = 'bg-light p-3 rounded request-detail-pre';
+                    const actualCode = document.createElement('code');
+                    actualCode.textContent = currentActualRequest;
+                    actualPre.appendChild(actualCode);
+                    actualDiv.appendChild(actualPre);
+                    
+                    actualTabPane.appendChild(actualDiv);
+                    tabContent.appendChild(actualTabPane);
+                }
+                
+                // レスポンスタブコンテンツ
+                const responseTabPane = document.createElement('div');
+                responseTabPane.className = 'tab-pane fade';
+                responseTabPane.id = 'response-content';
+                responseTabPane.setAttribute('role', 'tabpanel');
+                
+                const responseDiv = document.createElement('div');
+                responseDiv.className = 'mt-3';
+                
+                // レスポンスヘッダー
+                if (httpResponse.headers) {
+                    const headersTitle = document.createElement('h6');
+                    headersTitle.textContent = 'レスポンスヘッダー';
+                    responseDiv.appendChild(headersTitle);
+                    
+                    const headersPre = document.createElement('pre');
+                    headersPre.className = 'bg-light p-3 rounded response-detail-pre';
+                    headersPre.style.maxHeight = '200px';
+                    headersPre.style.overflowY = 'auto';
+                    const headersCode = document.createElement('code');
+                    headersCode.textContent = JSON.stringify(httpResponse.headers, null, 2);
+                    headersPre.appendChild(headersCode);
+                    responseDiv.appendChild(headersPre);
+                }
+                
+                // レスポンスボディ
+                if (httpResponse.body) {
+                    const bodyTitle = document.createElement('h6');
+                    bodyTitle.className = 'mt-3';
+                    bodyTitle.textContent = 'レスポンスボディ';
+                    responseDiv.appendChild(bodyTitle);
+                    
+                    const bodyPre = document.createElement('pre');
+                    bodyPre.className = 'bg-light p-3 rounded response-detail-pre';
+                    bodyPre.style.maxHeight = '300px';
+                    bodyPre.style.overflowY = 'auto';
+                    const bodyCode = document.createElement('code');
+                    bodyCode.textContent = httpResponse.body;
+                    bodyPre.appendChild(bodyCode);
+                    responseDiv.appendChild(bodyPre);
+                }
+                
+                // レスポンスデータがない場合
+                if (!httpResponse.headers && !httpResponse.body) {
+                    const noDataAlert = document.createElement('div');
+                    noDataAlert.className = 'alert alert-info';
+                    const noDataIcon = document.createElement('i');
+                    noDataIcon.className = 'fas fa-info-circle';
+                    noDataAlert.appendChild(noDataIcon);
+                    noDataAlert.appendChild(document.createTextNode(' レスポンスデータがありません。'));
+                    responseDiv.appendChild(noDataAlert);
+                }
+                
+                responseTabPane.appendChild(responseDiv);
+                tabContent.appendChild(responseTabPane);
+                
+                tabCol.appendChild(tabContent);
+                tabRow.appendChild(tabCol);
+                requestDetailContent.appendChild(tabRow);
+                
+                // ツールチップを初期化
+                setTimeout(() => {
+                    const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+                    tooltipTriggerList.map(function (tooltipTriggerEl) {
+                        return new bootstrap.Tooltip(tooltipTriggerEl);
+                    });
+                }, 100);
+                
                 const modal = new bootstrap.Modal(document.getElementById('requestDetailModal'));
                 modal.show();
             } catch (error) {
@@ -1619,8 +2152,13 @@
 
         async function showJobDetail(jobId) {
             try {
-                const response = await fetch(`/api/jobs/${jobId}`);
-                const job = await response.json();
+                // ジョブサマリー情報を取得
+                const jobResponse = await fetch(`/api/jobs/${jobId}`);
+                const job = await jobResponse.json();
+                
+                // 結果リストを取得（最初の50件）
+                const resultsResponse = await fetch(`/api/jobs/${jobId}/results?limit=50&offset=0`);
+                const resultsData = await resultsResponse.json();
                 
                 const content = document.getElementById('job-detail-content');
                 const startTime = new Date(job.progress?.start_time || job.created_at).toLocaleString('ja-JP');
@@ -1628,93 +2166,269 @@
                 const duration = job.progress?.end_time ? 
                     Math.round((new Date(job.progress.end_time) - new Date(job.progress.start_time || job.created_at)) / 1000) + '秒' : 
                     '実行中';
-                const jobIdFromResponse = job.id || job.job_id;
+                const jobIdFromResponse = job.job_id || job.id;
                 
-                content.innerHTML = `
-                    <div class="row mb-3">
-                        <div class="col-md-6">
-                            <h6>基本情報</h6>
-                            <table class="table table-sm">
-                                <tr><td>ジョブID:</td><td><code>${jobIdFromResponse || 'N/A'}</code></td></tr>
-                                <tr><td>ステータス:</td><td><span class="badge ${getJobStatusClass(job.status)}">${getJobStatusText(job.status)}</span></td></tr>
-                                <tr><td>開始時刻:</td><td>${startTime}</td></tr>
-                                <tr><td>終了時刻:</td><td>${endTime}</td></tr>
-                                <tr><td>実行時間:</td><td>${duration}</td></tr>
-                            </table>
-                        </div>
-                        <div class="col-md-6">
-                            <h6>実行結果</h6>
-                            <table class="table table-sm">
-                                <tr><td>総リクエスト数:</td><td>${job.progress?.total_requests || 0}</td></tr>
-                                <tr><td>成功:</td><td class="text-success">${job.progress?.successful_requests || 0}</td></tr>
-                                <tr><td>失敗:</td><td class="text-danger">${job.progress?.failed_requests || 0}</td></tr>
-                                <tr><td>成功率:</td><td>${(job.progress?.total_requests || 0) > 0 ? Math.round(((job.progress?.successful_requests || 0) / (job.progress?.total_requests || 1)) * 100) : 0}%</td></tr>
-                            </table>
-                        </div>
-                    </div>
+                // DOM操作で安全にコンテンツを作成
+                content.innerHTML = ''; // 一旦クリア
+                
+                // メインコンテナ作成
+                const mainRow = document.createElement('div');
+                mainRow.className = 'row mb-3';
+                
+                // 基本情報セクション
+                const basicInfoCol = document.createElement('div');
+                basicInfoCol.className = 'col-md-6';
+                
+                const basicInfoTitle = document.createElement('h6');
+                basicInfoTitle.textContent = '基本情報';
+                basicInfoCol.appendChild(basicInfoTitle);
+                
+                const basicInfoTable = document.createElement('table');
+                basicInfoTable.className = 'table table-sm';
+                
+                // 基本情報のテーブル行を安全に作成
+                const basicInfoData = [
+                    ['ジョブID:', jobIdFromResponse || 'N/A'],
+                    ['ステータス:', getJobStatusText(job.status)],
+                    ['開始時刻:', startTime],
+                    ['終了時刻:', endTime],
+                    ['実行時間:', duration]
+                ];
+                
+                basicInfoData.forEach(([label, value], index) => {
+                    const tr = document.createElement('tr');
+                    const tdLabel = document.createElement('td');
+                    tdLabel.textContent = label;
+                    const tdValue = document.createElement('td');
                     
-                    <h6>リクエスト詳細</h6>
-                    ${job.results && job.results.length > 0 ? `
-                        <div class="table-responsive">
-                            <table class="table table-sm table-striped table-hover">
-                                <thead>
-                                    <tr>
-                                        <th>#</th>
-                                        <th>ステータス</th>
-                                        <th>レスポンス時間</th>
-                                        <th>プレースホルダ/ペイロード</th>
-                                        <th>URL</th>
-                                        <th>エラー</th>
-                                        <th>詳細</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    ${job.results.map((result, index) => {
-                                        const httpResponse = result.http_response || {};
-                                        const isSuccess = !httpResponse.error && httpResponse.status_code >= 200 && httpResponse.status_code < 400;
-                                        const statusClass = isSuccess ? 'text-success' : 'text-danger';
-                                        const statusText = httpResponse.status_code ? 
-                                            `HTTP ${httpResponse.status_code}` : 
-                                            (httpResponse.error ? 'エラー' : 'N/A');
-                                        
-                                        const placeholderInfo = result.placeholder ? 
-                                            `${result.placeholder}` + (result.payload ? ` → ${result.payload.substring(0, 20)}${result.payload.length > 20 ? '...' : ''}` : '') :
-                                            'N/A';
-                                        
-                                        return `
-                                            <tr style="cursor: pointer;" onclick="showRequestDetail('${jobId}', ${index})">
-                                                <td>${index + 1}</td>
-                                                <td class="${statusClass}">
-                                                    <i class="fas fa-${isSuccess ? 'check' : 'times'}"></i>
-                                                    ${statusText}
-                                                </td>
-                                                <td>${httpResponse.elapsed_time ? httpResponse.elapsed_time.toFixed(3) + 's' : 'N/A'}</td>
-                                                <td>
-                                                    <small>${placeholderInfo}</small>
-                                                </td>
-                                                <td>
-                                                    <small>${httpResponse.url || 'N/A'}</small>
-                                                </td>
-                                                <td>
-                                                    <small class="text-danger">${httpResponse.error ? httpResponse.error.substring(0, 30) + (httpResponse.error.length > 30 ? '...' : '') : '-'}</small>
-                                                </td>
-                                                <td>
-                                                    <button class="btn btn-outline-primary btn-sm" onclick="event.stopPropagation(); showRequestDetail('${jobId}', ${index})">
-                                                        <i class="fas fa-eye"></i> 詳細
-                                                    </button>
-                                                </td>
-                                            </tr>
-                                        `;
-                                    }).join('')}
-                                </tbody>
-                            </table>
-                        </div>
-                    ` : `
-                        <div class="alert alert-info">
-                            <i class="fas fa-info-circle"></i> まだリクエスト結果がありません。
-                        </div>
-                    `}
-                `;
+                    if (index === 0) { // ジョブID
+                        const code = document.createElement('code');
+                        code.textContent = value;
+                        tdValue.appendChild(code);
+                    } else if (index === 1) { // ステータス
+                        const badge = document.createElement('span');
+                        badge.className = `badge ${getJobStatusClass(job.status)}`;
+                        badge.textContent = value;
+                        tdValue.appendChild(badge);
+                    } else {
+                        tdValue.textContent = value;
+                    }
+                    
+                    tr.appendChild(tdLabel);
+                    tr.appendChild(tdValue);
+                    basicInfoTable.appendChild(tr);
+                });
+                
+                basicInfoCol.appendChild(basicInfoTable);
+                mainRow.appendChild(basicInfoCol);
+                
+                // 実行結果セクション
+                const resultInfoCol = document.createElement('div');
+                resultInfoCol.className = 'col-md-6';
+                
+                const resultInfoTitle = document.createElement('h6');
+                resultInfoTitle.textContent = '実行結果';
+                resultInfoCol.appendChild(resultInfoTitle);
+                
+                const resultInfoTable = document.createElement('table');
+                resultInfoTable.className = 'table table-sm';
+                
+                const resultInfoData = [
+                    ['総リクエスト数:', job.progress?.total_requests || 0],
+                    ['成功:', job.progress?.successful_requests || 0, 'text-success'],
+                    ['失敗:', job.progress?.failed_requests || 0, 'text-danger'],
+                    ['成功率:', `${(job.progress?.total_requests || 0) > 0 ? Math.round(((job.progress?.successful_requests || 0) / (job.progress?.total_requests || 1)) * 100) : 0}%`]
+                ];
+                
+                resultInfoData.forEach(([label, value, className]) => {
+                    const tr = document.createElement('tr');
+                    const tdLabel = document.createElement('td');
+                    tdLabel.textContent = label;
+                    const tdValue = document.createElement('td');
+                    tdValue.textContent = value;
+                    if (className) tdValue.className = className;
+                    
+                    tr.appendChild(tdLabel);
+                    tr.appendChild(tdValue);
+                    resultInfoTable.appendChild(tr);
+                });
+                
+                resultInfoCol.appendChild(resultInfoTable);
+                mainRow.appendChild(resultInfoCol);
+                content.appendChild(mainRow);
+                
+                // リクエスト詳細セクション
+                const requestDetailTitle = document.createElement('h6');
+                requestDetailTitle.textContent = 'リクエスト詳細';
+                content.appendChild(requestDetailTitle);
+                
+                if (resultsData.total_results > 0) {
+                    // 50件超の場合の警告表示
+                    if (resultsData.total_results > 50) {
+                        const alertDiv = document.createElement('div');
+                        alertDiv.className = 'alert alert-info';
+                        const icon = document.createElement('i');
+                        icon.className = 'fas fa-info-circle';
+                        alertDiv.appendChild(icon);
+                        alertDiv.appendChild(document.createTextNode(` 総数${resultsData.total_results}件のうち最初の50件を表示しています。`));
+                        content.appendChild(alertDiv);
+                    }
+                    
+                    // テーブル作成
+                    const tableDiv = document.createElement('div');
+                    tableDiv.className = 'table-responsive';
+                    
+                    const table = document.createElement('table');
+                    table.className = 'table table-sm table-striped table-hover';
+                    
+                    // ヘッダー作成
+                    const thead = document.createElement('thead');
+                    const headerRow = document.createElement('tr');
+                    ['#', 'ステータス', 'レスポンス時間', 'プレースホルダ/ペイロード', 'URL', 'エラー', '詳細'].forEach(headerText => {
+                        const th = document.createElement('th');
+                        th.textContent = headerText;
+                        headerRow.appendChild(th);
+                    });
+                    thead.appendChild(headerRow);
+                    table.appendChild(thead);
+                    
+                    // ボディ作成
+                    const tbody = document.createElement('tbody');
+                    
+                    resultsData.results.forEach((result) => {
+                        const isSuccess = !result.error_message && result.status_code >= 200 && result.status_code < 400;
+                        const statusClass = isSuccess ? 'text-success' : 'text-danger';
+                        const statusText = result.status_code ? 
+                            `HTTP ${result.status_code}` : 
+                            (result.error_message ? 'エラー' : 'N/A');
+                        
+                        const tr = document.createElement('tr');
+                        tr.style.cursor = 'pointer';
+                        tr.onclick = () => showRequestDetailNew(jobId, result.request_number);
+                        
+                        // 行番号
+                        const tdNumber = document.createElement('td');
+                        tdNumber.textContent = result.request_number;
+                        tr.appendChild(tdNumber);
+                        
+                        // ステータス
+                        const tdStatus = document.createElement('td');
+                        tdStatus.className = statusClass;
+                        const statusIcon = document.createElement('i');
+                        statusIcon.className = `fas fa-${isSuccess ? 'check' : 'times'}`;
+                        tdStatus.appendChild(statusIcon);
+                        tdStatus.appendChild(document.createTextNode(' ' + statusText));
+                        tr.appendChild(tdStatus);
+                        
+                        // レスポンス時間
+                        const tdTime = document.createElement('td');
+                        tdTime.textContent = result.elapsed_time ? result.elapsed_time.toFixed(3) + 's' : 'N/A';
+                        tr.appendChild(tdTime);
+                        
+                        // プレースホルダ/ペイロード
+                        const tdPlaceholder = document.createElement('td');
+                        tdPlaceholder.className = 'payload-cell';
+                        const smallPlaceholder = document.createElement('small');
+                        
+                        // 短縮表示用テキスト（さらに短縮）
+                        const shortPlaceholderText = result.placeholder ? 
+                            result.placeholder + (result.payload ? ` → ${result.payload.substring(0, 10)}${result.payload.length > 10 ? '...' : ''}` : '') :
+                            'N/A';
+                        
+                        // 完全なテキスト（ツールチップ用）
+                        const fullPlaceholderText = result.placeholder ? 
+                            result.placeholder + (result.payload ? ` → ${result.payload}` : '') :
+                            'N/A';
+                        
+                        smallPlaceholder.textContent = shortPlaceholderText;
+                        
+                        // ツールチップを追加（短縮されている場合のみ）
+                        if (fullPlaceholderText.length > 20) {
+                            smallPlaceholder.setAttribute('data-bs-toggle', 'tooltip');
+                            smallPlaceholder.setAttribute('data-bs-placement', 'top');
+                            smallPlaceholder.setAttribute('title', fullPlaceholderText);
+                        }
+                        
+                        tdPlaceholder.appendChild(smallPlaceholder);
+                        tr.appendChild(tdPlaceholder);
+                        
+                        // URL
+                        const tdUrl = document.createElement('td');
+                        tdUrl.className = 'url-cell';
+                        const smallUrl = document.createElement('small');
+                        const urlText = result.url || 'N/A';
+                        smallUrl.textContent = urlText;
+                        
+                        // ツールチップを追加（長いURLの場合）
+                        if (urlText.length > 30) {
+                            smallUrl.setAttribute('data-bs-toggle', 'tooltip');
+                            smallUrl.setAttribute('data-bs-placement', 'top');
+                            smallUrl.setAttribute('title', urlText);
+                        }
+                        
+                        tdUrl.appendChild(smallUrl);
+                        tr.appendChild(tdUrl);
+                        
+                        // エラー
+                        const tdError = document.createElement('td');
+                        tdError.className = 'error-cell';
+                        const smallError = document.createElement('small');
+                        smallError.className = 'text-danger';
+                        const shortErrorText = result.error_message ? 
+                            result.error_message.substring(0, 20) + (result.error_message.length > 20 ? '...' : '') : 
+                            '-';
+                        const fullErrorText = result.error_message || '-';
+                        smallError.textContent = shortErrorText;
+                        
+                        // ツールチップを追加（エラーが長い場合）
+                        if (result.error_message && result.error_message.length > 20) {
+                            smallError.setAttribute('data-bs-toggle', 'tooltip');
+                            smallError.setAttribute('data-bs-placement', 'top');
+                            smallError.setAttribute('title', fullErrorText);
+                        }
+                        
+                        tdError.appendChild(smallError);
+                        tr.appendChild(tdError);
+                        
+                        // 詳細ボタン
+                        const tdDetail = document.createElement('td');
+                        const detailBtn = document.createElement('button');
+                        detailBtn.className = 'btn btn-outline-primary btn-sm';
+                        detailBtn.onclick = (e) => {
+                            e.stopPropagation();
+                            showRequestDetailNew(jobId, result.request_number);
+                        };
+                        const btnIcon = document.createElement('i');
+                        btnIcon.className = 'fas fa-eye';
+                        detailBtn.appendChild(btnIcon);
+                        detailBtn.appendChild(document.createTextNode(' 詳細'));
+                        tdDetail.appendChild(detailBtn);
+                        tr.appendChild(tdDetail);
+                        
+                        tbody.appendChild(tr);
+                    });
+                    
+                    table.appendChild(tbody);
+                    tableDiv.appendChild(table);
+                    content.appendChild(tableDiv);
+                    
+                    // ツールチップを初期化
+                    setTimeout(() => {
+                        const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+                        tooltipTriggerList.map(function (tooltipTriggerEl) {
+                            return new bootstrap.Tooltip(tooltipTriggerEl);
+                        });
+                    }, 100);
+                } else {
+                    // 結果がない場合
+                    const alertDiv = document.createElement('div');
+                    alertDiv.className = 'alert alert-info';
+                    const icon = document.createElement('i');
+                    icon.className = 'fas fa-info-circle';
+                    alertDiv.appendChild(icon);
+                    alertDiv.appendChild(document.createTextNode(' まだリクエスト結果がありません。'));
+                    content.appendChild(alertDiv);
+                }
                 
                 const modal = new bootstrap.Modal(document.getElementById('jobDetailModal'));
                 modal.show();
