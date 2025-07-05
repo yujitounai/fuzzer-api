@@ -153,6 +153,26 @@
             </div>
         </div>
 
+        <!-- リクエスト詳細モーダル -->
+        <div class="modal fade" id="requestDetailModal" tabindex="-1">
+            <div class="modal-dialog modal-xl">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">リクエスト/レスポンス詳細</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div id="request-detail-content">
+                            <!-- リクエスト詳細がここに表示されます -->
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">閉じる</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- クリーンアップ設定モーダル -->
         <div class="modal fade" id="cleanupModal" tabindex="-1">
             <div class="modal-dialog">
@@ -1373,6 +1393,230 @@
             }
         }
 
+        async function showRequestDetail(jobId, requestIndex) {
+            try {
+                const response = await fetch(`/api/jobs/${jobId}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                const job = await response.json();
+                
+                if (!job.results || requestIndex >= job.results.length) {
+                    alert('リクエスト詳細が見つかりません。');
+                    return;
+                }
+                
+                const result = job.results[requestIndex];
+                const httpResponse = result.http_response || {};
+                
+                // デバッグ用：結果オブジェクトをコンソールに出力
+                console.log('Full result object:', result);
+                console.log('Request type:', typeof result.request);
+                console.log('Request content:', result.request);
+                console.log('Available keys:', Object.keys(result));
+                console.log('Request is string?', typeof result.request === 'string');
+                console.log('Request is object?', typeof result.request === 'object');
+                if (typeof result.request === 'string') {
+                    console.log('Request string length:', result.request.length);
+                    console.log('Request starts with:', result.request.substring(0, 100));
+                }
+                if (typeof result.request === 'object' && result.request !== null) {
+                    console.log('Request object keys:', Object.keys(result.request));
+                    console.log('Request object structure:', result.request);
+                }
+                
+                // JSONからHTTPリクエストを構築する関数
+                function buildHttpRequest(requestData) {
+                    console.log('buildHttpRequest called with:', requestData);
+                    console.log('buildHttpRequest type:', typeof requestData);
+                    
+                    // 文字列の場合はそのまま返す
+                    if (typeof requestData === 'string') {
+                        console.log('Returning string as-is');
+                        return requestData;
+                    }
+                    
+                    // オブジェクトの場合
+                    if (typeof requestData === 'object' && requestData !== null) {
+                        console.log('Processing object:', requestData);
+                        
+                        // 直接HTTPリクエストの形式が含まれているか確認
+                        if (requestData.request && typeof requestData.request === 'string') {
+                            console.log('Found nested request string');
+                            return requestData.request;
+                        }
+                        
+                        // パースされたHTTPリクエストオブジェクトの場合
+                        if (requestData.method || requestData.url || requestData.path) {
+                            console.log('Building HTTP request from parsed object');
+                            let requestText = '';
+                            
+                            // method, url, version
+                            const method = requestData.method || 'GET';
+                            const url = requestData.url || requestData.path || '/';
+                            const version = requestData.version || requestData.http_version || 'HTTP/1.1';
+                            requestText += `${method} ${url} ${version}\\n`;
+                            
+                            // headers
+                            if (requestData.headers && typeof requestData.headers === 'object') {
+                                for (const [key, value] of Object.entries(requestData.headers)) {
+                                    requestText += `${key}: ${value}\\n`;
+                                }
+                            }
+                            
+                            // 空行でヘッダーとボディを分離
+                            requestText += '\\n';
+                            
+                            // body
+                            if (requestData.body) {
+                                requestText += requestData.body;
+                            }
+                            
+                            return requestText;
+                        }
+                        
+                        // それ以外のオブジェクトは JSON として表示
+                        console.log('Returning JSON string');
+                        return JSON.stringify(requestData, null, 2);
+                    }
+                    
+                    // その他の場合
+                    console.log('Returning fallback JSON string');
+                    return JSON.stringify(requestData, null, 2);
+                }
+                
+                // プレースホルダ情報を抽出する関数
+                function getPlaceholderInfo(result) {
+                    // 直接のプロパティを確認
+                    if (result.placeholder !== undefined || result.payload !== undefined || result.position !== undefined) {
+                        return {
+                            placeholder: result.placeholder,
+                            payload: result.payload,
+                            position: result.position
+                        };
+                    }
+                    
+                    // request_infoやrequest_detailsなどのネストしたオブジェクトを確認
+                    const possibleKeys = ['request_info', 'request_details', 'details', 'metadata'];
+                    for (const key of possibleKeys) {
+                        if (result[key] && typeof result[key] === 'object') {
+                            const nested = result[key];
+                            if (nested.placeholder !== undefined || nested.payload !== undefined || nested.position !== undefined) {
+                                return {
+                                    placeholder: nested.placeholder,
+                                    payload: nested.payload,
+                                    position: nested.position
+                                };
+                            }
+                        }
+                    }
+                    
+                    return {
+                        placeholder: 'N/A',
+                        payload: 'N/A',
+                        position: 'N/A'
+                    };
+                }
+                
+                const placeholderInfo = getPlaceholderInfo(result);
+                const requestContent = buildHttpRequest(result.request);
+                
+                const requestDetailContent = document.getElementById('request-detail-content');
+                requestDetailContent.innerHTML = `
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h6 class="mb-0"><i class="fas fa-arrow-up text-primary"></i> リクエスト詳細</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label class="form-label">プレースホルダ情報:</label>
+                                        <div class="table-responsive">
+                                            <table class="table table-sm">
+                                                <tr><th>プレースホルダ:</th><td><code>${placeholderInfo.placeholder}</code></td></tr>
+                                                <tr><th>ペイロード:</th><td><code>${placeholderInfo.payload}</code></td></tr>
+                                                <tr><th>位置:</th><td>${placeholderInfo.position}</td></tr>
+                                                <tr><th>データ構造:</th><td><pre style="font-size: 0.8em; max-height: 100px; overflow-y: auto;">${JSON.stringify(result, null, 2)}</pre></td></tr>
+                                            </table>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label class="form-label">リクエスト内容:</label>
+                                        <div class="border p-2" style="max-height: 400px; overflow-y: auto;">
+                                            <pre style="white-space: pre-wrap; font-size: 0.85em;">${escapeHtml(requestContent)}</pre>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h6 class="mb-0">
+                                        <i class="fas fa-arrow-down ${httpResponse.error ? 'text-danger' : 'text-success'}"></i> 
+                                        レスポンス詳細
+                                    </h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label class="form-label">基本情報:</label>
+                                        <div class="table-responsive">
+                                            <table class="table table-sm">
+                                                <tr>
+                                                    <th>ステータスコード:</th>
+                                                    <td>
+                                                        <span class="badge ${httpResponse.status_code >= 200 && httpResponse.status_code < 400 ? 'bg-success' : 'bg-danger'}">
+                                                            ${httpResponse.status_code || 'N/A'}
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                                <tr><th>URL:</th><td><small>${httpResponse.url || 'N/A'}</small></td></tr>
+                                                <tr><th>レスポンス時間:</th><td>${httpResponse.elapsed_time ? httpResponse.elapsed_time.toFixed(3) + 's' : 'N/A'}</td></tr>
+                                                <tr>
+                                                    <th>エラー:</th>
+                                                    <td class="text-danger">
+                                                        ${httpResponse.error ? `<pre style="white-space: pre-wrap; font-size: 0.85em;">${escapeHtml(typeof httpResponse.error === 'string' ? httpResponse.error : JSON.stringify(httpResponse.error, null, 2))}</pre>` : '-'}
+                                                    </td>
+                                                </tr>
+                                            </table>
+                                        </div>
+                                    </div>
+                                    
+                                    ${httpResponse.headers ? `
+                                        <div class="mb-3">
+                                            <label class="form-label">レスポンスヘッダー:</label>
+                                            <div class="border p-2" style="max-height: 200px; overflow-y: auto;">
+                                                <pre style="white-space: pre-wrap; font-size: 0.85em;">${typeof httpResponse.headers === 'object' && httpResponse.headers !== null ? Object.entries(httpResponse.headers).map(([key, value]) => `${key}: ${value}`).join('\\n') : escapeHtml(String(httpResponse.headers))}</pre>
+                                            </div>
+                                        </div>
+                                    ` : ''}
+                                    
+                                    ${httpResponse.body ? `
+                                        <div class="mb-3">
+                                            <label class="form-label">レスポンスボディ:</label>
+                                            <div class="border p-2" style="max-height: 300px; overflow-y: auto;">
+                                                <pre style="white-space: pre-wrap; font-size: 0.85em;">${escapeHtml(typeof httpResponse.body === 'string' ? httpResponse.body.substring(0, 5000) : JSON.stringify(httpResponse.body, null, 2).substring(0, 5000))}${(typeof httpResponse.body === 'string' ? httpResponse.body.length : JSON.stringify(httpResponse.body).length) > 5000 ? '\\n\\n... (省略) ...' : ''}</pre>
+                                            </div>
+                                        </div>
+                                    ` : ''}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                const modal = new bootstrap.Modal(document.getElementById('requestDetailModal'));
+                modal.show();
+            } catch (error) {
+                console.error('リクエスト詳細の取得に失敗しました:', error);
+                alert('リクエスト詳細の取得に失敗しました。');
+            }
+        }
+
         async function showJobDetail(jobId) {
             try {
                 const response = await fetch(`/api/jobs/${jobId}`);
@@ -1412,35 +1656,53 @@
                     <h6>リクエスト詳細</h6>
                     ${job.results && job.results.length > 0 ? `
                         <div class="table-responsive">
-                            <table class="table table-sm table-striped">
+                            <table class="table table-sm table-striped table-hover">
                                 <thead>
                                     <tr>
                                         <th>#</th>
                                         <th>ステータス</th>
                                         <th>レスポンス時間</th>
+                                        <th>プレースホルダ/ペイロード</th>
                                         <th>URL</th>
                                         <th>エラー</th>
+                                        <th>詳細</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     ${job.results.map((result, index) => {
                                         const httpResponse = result.http_response || {};
-                                        const isSuccess = !httpResponse.error;
+                                        const isSuccess = !httpResponse.error && httpResponse.status_code >= 200 && httpResponse.status_code < 400;
                                         const statusClass = isSuccess ? 'text-success' : 'text-danger';
-                                        const statusText = isSuccess ? 
-                                            `HTTP ${httpResponse.status_code || 'N/A'}` : 
-                                            'エラー';
+                                        const statusText = httpResponse.status_code ? 
+                                            `HTTP ${httpResponse.status_code}` : 
+                                            (httpResponse.error ? 'エラー' : 'N/A');
+                                        
+                                        const placeholderInfo = result.placeholder ? 
+                                            `${result.placeholder}` + (result.payload ? ` → ${result.payload.substring(0, 20)}${result.payload.length > 20 ? '...' : ''}` : '') :
+                                            'N/A';
                                         
                                         return `
-                                            <tr>
+                                            <tr style="cursor: pointer;" onclick="showRequestDetail('${jobId}', ${index})">
                                                 <td>${index + 1}</td>
                                                 <td class="${statusClass}">
                                                     <i class="fas fa-${isSuccess ? 'check' : 'times'}"></i>
                                                     ${statusText}
                                                 </td>
                                                 <td>${httpResponse.elapsed_time ? httpResponse.elapsed_time.toFixed(3) + 's' : 'N/A'}</td>
-                                                <td>${httpResponse.url || 'N/A'}</td>
-                                                <td>${httpResponse.error || '-'}</td>
+                                                <td>
+                                                    <small>${placeholderInfo}</small>
+                                                </td>
+                                                <td>
+                                                    <small>${httpResponse.url || 'N/A'}</small>
+                                                </td>
+                                                <td>
+                                                    <small class="text-danger">${httpResponse.error ? httpResponse.error.substring(0, 30) + (httpResponse.error.length > 30 ? '...' : '') : '-'}</small>
+                                                </td>
+                                                <td>
+                                                    <button class="btn btn-outline-primary btn-sm" onclick="event.stopPropagation(); showRequestDetail('${jobId}', ${index})">
+                                                        <i class="fas fa-eye"></i> 詳細
+                                                    </button>
+                                                </td>
                                             </tr>
                                         `;
                                     }).join('')}

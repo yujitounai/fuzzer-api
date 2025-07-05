@@ -27,6 +27,8 @@ class HTTPRequestConfig:
     verify_ssl: bool = True
     scheme: str = "http"  # http または https
     base_url: str = "localhost:8000"  # ベースURL（スキームなし）
+    sequential_execution: bool = False  # True: 同期実行（順次）, False: 並列実行
+    request_delay: float = 0.0  # リクエスト間の待機時間（秒）
 
 @dataclass
 class HTTPResponse:
@@ -111,15 +113,34 @@ class HTTPClient:
         body_lines = lines[body_start:] if body_start < len(lines) else []
         body = '\n'.join(body_lines)
         
-        # Content-Lengthヘッダーがある場合、ボディの長さを検証
+        # multipart/form-dataの場合は、改行文字も含めて正確に処理
+        content_type = headers.get('Content-Type', '').lower()
+        if 'multipart/form-data' in content_type:
+            # 原文からボディ部分を抽出（改行を保持）
+            body_start_index = request_text.find('\n\n')
+            if body_start_index != -1:
+                body = request_text[body_start_index + 2:]
+            else:
+                # 単一改行の場合も考慮
+                body_start_index = request_text.find('\r\n\r\n')
+                if body_start_index != -1:
+                    body = request_text[body_start_index + 4:]
+                else:
+                    # 最後の手段として行ベースで処理
+                    body = '\n'.join(body_lines)
+        
+        # Content-Lengthヘッダーがある場合、ボディの長さを検証（参考情報のみ）
         if 'Content-Length' in headers:
             try:
                 expected_length = int(headers['Content-Length'])
                 actual_length = len(body.encode('utf-8'))
                 if actual_length != expected_length:
-                    logger.warning(f"Content-Length不一致: 期待値={expected_length}, 実際={actual_length}")
+                    logger.info(f"元のContent-Length: {expected_length}, 実際のボディサイズ: {actual_length}")
+                    logger.info("Content-Lengthは送信時にライブラリが自動計算します")
+                else:
+                    logger.info(f"Content-Lengthが一致: {expected_length} bytes")
             except ValueError:
-                logger.warning("無効なContent-Lengthヘッダー")
+                logger.info("無効なContent-Lengthヘッダーを検出")
         
         return {
             "method": method,
@@ -128,6 +149,60 @@ class HTTPClient:
             "body": body,
             "version": version
         }
+    
+    def calculate_content_length(self, body: str) -> int:
+        """
+        リクエストボディのContent-Lengthを計算
+        
+        Args:
+            body (str): リクエストボディ
+            
+        Returns:
+            int: Content-Lengthの値
+        """
+        return len(body.encode('utf-8'))
+    
+    def ensure_multipart_body_format(self, body: str, content_type: str) -> str:
+        """
+        multipart/form-dataのボディ形式を確認・修正（最小限の処理）
+        
+        Args:
+            body (str): リクエストボディ
+            content_type (str): Content-Typeヘッダー
+            
+        Returns:
+            str: 修正されたボディ
+        """
+        if 'multipart/form-data' not in content_type.lower():
+            return body
+        
+        # バウンダリーを抽出
+        boundary_match = re.search(r'boundary=([^;]+)', content_type)
+        if not boundary_match:
+            logger.warning("multipart/form-dataのバウンダリーが見つかりません")
+            return body
+        
+        boundary = boundary_match.group(1)
+        final_boundary = f'--{boundary}--'
+        
+        logger.info(f"Original body length: {len(body.encode('utf-8'))}")
+        
+        # 最終バウンダリーのチェックのみ行い、元のボディを最大限保持
+        if not body.rstrip().endswith(final_boundary):
+            logger.info("最終バウンダリーの確認")
+            
+            # 最小限の修正のみ実施
+            if body.rstrip().endswith(f'--{boundary}'):
+                # 最後が通常のバウンダリーの場合、最終バウンダリーに変更
+                body = body.rstrip()[:-len(f'--{boundary}')] + final_boundary
+                logger.info("最終バウンダリーを修正しました")
+            else:
+                # 元のボディをそのまま使用（ライブラリが適切に処理することを期待）
+                logger.info("元のボディをそのまま使用します")
+        else:
+            logger.info("最終バウンダリーは正しい形式です")
+        
+        return body
     
     async def send_request(self, request_text: str, config: HTTPRequestConfig = None) -> HTTPResponse:
         """
@@ -185,7 +260,8 @@ class HTTPClient:
             # 解析されたヘッダーを追加（設定されたヘッダーを上書き）
             for key, value in parsed["headers"].items():
                 # 一部のヘッダーは自動設定されるため除外
-                if key.lower() not in ['host', 'content-length', 'connection']:
+                # Content-Lengthは常にライブラリに自動計算させる
+                if key.lower() not in ['host', 'connection', 'content-length']:
                     headers[key] = value
             
             # Hostヘッダーの処理（既に設定されている場合はそのまま使用）
@@ -197,7 +273,18 @@ class HTTPClient:
             if parsed["body"]:
                 # Content-Typeヘッダーに基づいてボディを処理
                 content_type = headers.get('Content-Type', '').lower()
-                if 'application/json' in content_type:
+                
+                if 'multipart/form-data' in content_type:
+                    # multipart/form-dataの場合は最小限の処理にとどめる
+                    body = self.ensure_multipart_body_format(parsed["body"], content_type)
+                    
+                    # データはbytesとして処理
+                    data = body.encode('utf-8')
+                    
+                    logger.info(f"multipart/form-data処理: ボディサイズ={len(data)} bytes")
+                    logger.info("Content-Lengthはライブラリが自動計算します")
+                    
+                elif 'application/json' in content_type:
                     try:
                         data = json.dumps(json.loads(parsed["body"]))
                     except json.JSONDecodeError:
@@ -255,6 +342,43 @@ class HTTPClient:
         """
         tasks = [self.send_request(req, config) for req in requests]
         return await asyncio.gather(*tasks, return_exceptions=True)
+    
+    async def send_multiple_requests_sequential(self, requests: List[str], config: HTTPRequestConfig = None) -> List[HTTPResponse]:
+        """
+        複数のリクエストを順次送信（同期実行）
+        
+        Args:
+            requests (List[str]): リクエスト文字列のリスト
+            config (HTTPRequestConfig): リクエスト設定
+            
+        Returns:
+            List[HTTPResponse]: レスポンス情報のリスト
+        """
+        if config is None:
+            config = HTTPRequestConfig()
+            
+        results = []
+        for i, request in enumerate(requests):
+            print(f"同期実行: リクエスト {i+1}/{len(requests)} を送信中...")
+            try:
+                response = await self.send_request(request, config)
+                results.append(response)
+                print(f"同期実行: リクエスト {i+1} 完了 - ステータス: {response.status_code}")
+                
+                # リクエスト間の待機時間（最後のリクエスト以外）
+                if i < len(requests) - 1 and config.request_delay > 0:
+                    print(f"同期実行: {config.request_delay}秒待機中...")
+                    await asyncio.sleep(config.request_delay)
+                    
+            except Exception as e:
+                print(f"同期実行: リクエスト {i+1} エラー - {str(e)}")
+                results.append(e)
+                
+                # エラーが発生してもウェイトを入れる（オプション）
+                if i < len(requests) - 1 and config.request_delay > 0:
+                    await asyncio.sleep(config.request_delay)
+                    
+        return results
 
 class RequestExecutor:
     """リクエスト実行クラス"""
@@ -271,12 +395,20 @@ class RequestExecutor:
         Returns:
             List[Dict[str, Any]]: 実行結果のリスト
         """
+        if config is None:
+            config = HTTPRequestConfig()
+            
         async with HTTPClient() as client:
             # リクエスト文字列を抽出
             request_texts = [req["request"] for req in requests]
             
-            # リクエストを送信
-            responses = await client.send_multiple_requests(request_texts, config)
+            # 実行モードに応じてリクエストを送信
+            if config.sequential_execution:
+                print(f"同期実行モード: {len(request_texts)}件のリクエストを順次実行します")
+                responses = await client.send_multiple_requests_sequential(request_texts, config)
+            else:
+                print(f"並列実行モード: {len(request_texts)}件のリクエストを並列実行します")
+                responses = await client.send_multiple_requests(request_texts, config)
             
             # 結果を結合
             results = []
