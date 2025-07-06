@@ -140,6 +140,12 @@
                 <button class="btn btn-sm btn-outline-secondary" onclick="loadBatteringRamSampleJson()">
                   <i class="bi bi-file-earmark-text"></i> Battering Ramサンプル
                 </button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="loadPitchforkSampleJson()">
+                  <i class="bi bi-file-earmark-text"></i> Pitchforkサンプル
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="loadClusterBombSampleJson()">
+                  <i class="bi bi-file-earmark-text"></i> Cluster Bombサンプル
+                </button>
               </div>
               <div class="form-text">
                 Mutations形式のJSONを入力してペイロードを指定できます
@@ -169,6 +175,134 @@
                 <p>設定を入力して「API実行」をクリックしてください</p>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 実行設定モーダル -->
+  <div class="modal fade" id="executeModal" tabindex="-1">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">HTTPリクエスト実行設定</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <form id="execute-form">
+            <div class="row">
+              <div class="col-md-6">
+                <div class="mb-3">
+                  <label for="scheme" class="form-label">プロトコル</label>
+                  <select class="form-select" id="scheme">
+                    <option value="http">HTTP</option>
+                    <option value="https">HTTPS</option>
+                  </select>
+                </div>
+              </div>
+              <div class="col-md-6">
+                <div class="mb-3">
+                  <label for="base-url" class="form-label">ベースURL</label>
+                  <input type="text" class="form-control" id="base-url" value="localhost:8000" placeholder="example.com:443">
+                </div>
+              </div>
+            </div>
+            <div class="mb-3">
+              <label for="timeout" class="form-label">タイムアウト（秒）</label>
+              <input type="number" class="form-control" id="timeout" value="30" min="1" max="300">
+            </div>
+            <div class="mb-3">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="follow-redirects" checked>
+                <label class="form-check-label" for="follow-redirects">
+                  リダイレクトを追跡
+                </label>
+              </div>
+            </div>
+            <div class="mb-3">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="verify-ssl">
+                <label class="form-check-label" for="verify-ssl">
+                  SSL証明書を検証
+                </label>
+              </div>
+            </div>
+            <div class="mb-3">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="sequential-execution">
+                <label class="form-check-label" for="sequential-execution">
+                  同期実行（リクエストを順次実行）
+                </label>
+              </div>
+              <div class="form-text">チェックすると、リクエストを並列ではなく順次実行します</div>
+            </div>
+            <div class="mb-3">
+              <label for="request-delay" class="form-label">リクエスト間ウェイト（秒）</label>
+              <input type="number" class="form-control" id="request-delay" value="0" min="0" max="60" step="0.1">
+              <div class="form-text">同期実行時のリクエスト間の待機時間（0の場合はウェイトなし）</div>
+            </div>
+            <div class="mb-3">
+              <label for="additional-headers" class="form-label">追加ヘッダー（JSON形式）</label>
+              <textarea class="form-control" id="additional-headers" rows="3" placeholder='{"User-Agent": "Custom-Agent/1.0"}'></textarea>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">キャンセル</button>
+          <button type="button" class="btn btn-primary" onclick="confirmExecute()">
+            <i class="bi bi-play"></i> 実行開始
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 実行結果モーダル -->
+  <div class="modal fade" id="resultModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">HTTPリクエスト実行結果</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="row mb-3">
+            <div class="col-md-3">
+              <div class="card bg-primary text-white">
+                <div class="card-body text-center">
+                  <h4 id="modal-total-executed">-</h4>
+                  <p>総リクエスト数</p>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-3">
+              <div class="card bg-success text-white">
+                <div class="card-body text-center">
+                  <h4 id="modal-successful-executed">-</h4>
+                  <p>成功</p>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-3">
+              <div class="card bg-danger text-white">
+                <div class="card-body text-center">
+                  <h4 id="modal-failed-executed">-</h4>
+                  <p>失敗</p>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-3">
+              <div class="card bg-info text-white">
+                <div class="card-body text-center">
+                  <h4 id="modal-success-rate">-</h4>
+                  <p>成功率</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="modal-execution-results">
+            <!-- 実行結果がここに表示されます -->
           </div>
         </div>
       </div>
@@ -256,9 +390,9 @@
     function loadPitchforkExample() {
       document.getElementById('strategy').value = 'pitchfork';
       if (templateCodeMirror) {
-        templateCodeMirror.setValue('username=<<username>>&user_id=<<user_id>>&role=<<role>>');
+        templateCodeMirror.setValue('GET /get?username=<<username>>&user_id=<<user_id>>&role=<<role>> HTTP/1.1\nHost: httpbin.org\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\nAccept-Encoding: gzip, deflate, br, zstd\nAccept-Language: ja,en-US;q=0.9,en;q=0.8');
       } else {
-        document.getElementById('template').value = 'username=<<username>>&user_id=<<user_id>>&role=<<role>>';
+        document.getElementById('template').value = 'GET /get?username=<<username>>&user_id=<<user_id>>&role=<<role>> HTTP/1.1\nHost: httpbin.org\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\nAccept-Encoding: gzip, deflate, br, zstd\nAccept-Language: ja,en-US;q=0.9,en;q=0.8';
       }
       document.getElementById('placeholders').value = 'username,user_id,role';
     }
@@ -266,9 +400,9 @@
     function loadClusterBombExample() {
       document.getElementById('strategy').value = 'cluster_bomb';
       if (templateCodeMirror) {
-        templateCodeMirror.setValue('username=<<username>>&password=<<password>>');
+        templateCodeMirror.setValue('GET /get?username=<<username>>&password=<<password>> HTTP/1.1\nHost: httpbin.org\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\nAccept-Encoding: gzip, deflate, br, zstd\nAccept-Language: ja,en-US;q=0.9,en;q=0.8');
       } else {
-        document.getElementById('template').value = 'username=<<username>>&password=<<password>>';
+        document.getElementById('template').value = 'GET /get?username=<<username>>&password=<<password>> HTTP/1.1\nHost: httpbin.org\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\nAccept-Encoding: gzip, deflate, br, zstd\nAccept-Language: ja,en-US;q=0.9,en;q=0.8';
       }
       document.getElementById('placeholders').value = 'username,password';
     }
@@ -276,7 +410,7 @@
     function loadPostFormExample() {
       document.getElementById('strategy').value = 'sniper';
       const templateValue = `POST /api/login HTTP/1.1
-Host: example.com
+Host: httpbin.org
 Content-Type: application/x-www-form-urlencoded
 User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
 Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
@@ -298,7 +432,7 @@ username=<<>>&password=<<>>&submit=Login`;
     function loadPostJsonExample() {
       document.getElementById('strategy').value = 'sniper';
       const templateValue = `POST /api/users HTTP/1.1
-Host: api.example.com
+Host: httpbin.org
 Content-Type: application/json
 User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
 Accept: application/json
@@ -317,8 +451,8 @@ Content-Length: <<>>
 
     function loadPostMultipartExample() {
       document.getElementById('strategy').value = 'sniper';
-      const templateValue = `POST /api/upload HTTP/1.1
-Host: upload.example.com
+      const templateValue = `POST /post HTTP/1.1
+Host: httpbin.org
 Content-Type: multipart/form-data; boundary=----WebKitFormBoundary<<>>
 User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
 Accept: application/json
@@ -349,7 +483,7 @@ Content-Disposition: form-data; name="description"
       
       // テンプレートを設定
       const templateValue = `GET /api/test?param=<<X>> HTTP/1.1
-Host: example.com
+    Host: httpbin.org
 User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
 Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
       
@@ -370,7 +504,7 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
       // 変異の例を設定（実際のAPIでは別のエンドポイントを使用）
       alert('Mutation機能の例:\n\n' +
             '{\n' +
-            '  "template": "GET /api/test?param=<<X>> HTTP/1.1\\nHost: example.com",\n' +
+            '  "template": "GET /api/test?param=<<X>> HTTP/1.1\\nHost: httpbin.org",\n' +
             '  "mutations": [\n' +
             '    {\n' +
             '      "token": "<<X>>",\n' +
@@ -449,6 +583,81 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
         '    }',
         '  ],',
         '  "combo": "Battering Ram"',
+        '}'
+      ].join('\n');
+      if (jsonCodeMirror) {
+        jsonCodeMirror.setValue(sampleJson);
+      } else {
+        document.getElementById('json-input').value = sampleJson;
+      }
+    }
+
+    function loadPitchforkSampleJson() {
+      const sampleJson = [
+        '{',
+        '  "mutations": [',
+        '    {',
+        '      "token": "<<username>>",',
+        '      "strategy": "dictionary",',
+        '      "values": [',
+        '        "admin",',
+        '        "user",',
+        '        "guest"',
+        '      ]',
+        '    },',
+        '    {',
+        '      "token": "<<user_id>>",',
+        '      "strategy": "dictionary",',
+        '      "values": [',
+        '        "1",',
+        '        "2",',
+        '        "3"',
+        '      ]',
+        '    },',
+        '    {',
+        '      "token": "<<role>>",',
+        '      "strategy": "dictionary",',
+        '      "values": [',
+        '        "admin",',
+        '        "user",',
+        '        "guest"',
+        '      ]',
+        '    }',
+        '  ],',
+        '  "combo": "Pitchfork"',
+        '}'
+      ].join('\n');
+      if (jsonCodeMirror) {
+        jsonCodeMirror.setValue(sampleJson);
+      } else {
+        document.getElementById('json-input').value = sampleJson;
+      }
+    }
+
+    function loadClusterBombSampleJson() {
+      const sampleJson = [
+        '{',
+        '  "mutations": [',
+        '    {',
+        '      "token": "<<username>>",',
+        '      "strategy": "dictionary",',
+        '      "values": [',
+        '        "admin",',
+        '        "user",',
+        '        "test"',
+        '      ]',
+        '    },',
+        '    {',
+        '      "token": "<<password>>",',
+        '      "strategy": "dictionary",',
+        '      "values": [',
+        '        "password",',
+        '        "123456",',
+        '        "admin"',
+        '      ]',
+        '    }',
+        '  ],',
+        '  "combo": "Cluster Bomb"',
         '}'
       ].join('\n');
       if (jsonCodeMirror) {
@@ -635,24 +844,43 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
             return;
           }
 
-          // 実行設定を取得
-          const scheme = prompt('プロトコル (http/https):', 'http');
-          if (!scheme) return;
-          
-          const baseUrl = prompt('ベースURL:', 'localhost:8000');
-          if (!baseUrl) return;
-          
-          const timeout = prompt('タイムアウト（秒）:', '30');
-          if (!timeout) return;
-          
-          const followRedirects = confirm('リダイレクトを追跡しますか？');
-          const verifySsl = confirm('SSL証明書を検証しますか？');
+          // 実行設定モーダルを表示
+          const executeModal = new bootstrap.Modal(document.getElementById('executeModal'));
+          executeModal.show();
+        }
 
-          const button = document.querySelector('.btn-success');
-          const originalText = button.innerHTML;
-          button.disabled = true;
-          button.innerHTML = '<i class="bi bi-hourglass-split"></i> 実行中...';
+        // 実行を確認して開始
+        async function confirmExecute() {
+          if (!lastRequestResult) {
+            alert('実行するリクエストがありません。');
+            return;
+          }
 
+          // 設定を取得
+          const scheme = document.getElementById('scheme').value;
+          const baseUrl = document.getElementById('base-url').value;
+          const timeout = parseInt(document.getElementById('timeout').value);
+          const followRedirects = document.getElementById('follow-redirects').checked;
+          const verifySsl = document.getElementById('verify-ssl').checked;
+          const sequentialExecution = document.getElementById('sequential-execution').checked;
+          const requestDelay = parseFloat(document.getElementById('request-delay').value);
+          const additionalHeadersText = document.getElementById('additional-headers').value;
+
+          let additionalHeaders = null;
+          if (additionalHeadersText.trim()) {
+            try {
+              additionalHeaders = JSON.parse(additionalHeadersText);
+            } catch (e) {
+              alert('追加ヘッダーのJSON形式が正しくありません。');
+              return;
+            }
+          }
+
+          // 実行設定モーダルを閉じる
+          const executeModal = bootstrap.Modal.getInstance(document.getElementById('executeModal'));
+          executeModal.hide();
+
+          // 実行開始
           try {
             const response = await fetch('/api/execute-requests', {
               method: 'POST',
@@ -664,10 +892,12 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
                 http_config: {
                   scheme: scheme,
                   base_url: baseUrl,
-                  timeout: parseInt(timeout),
+                  timeout: timeout,
                   follow_redirects: followRedirects,
                   verify_ssl: verifySsl,
-                  additional_headers: null
+                  sequential_execution: sequentialExecution,
+                  request_delay: requestDelay,
+                  additional_headers: additionalHeaders
                 }
               })
             });
@@ -677,22 +907,19 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
             if (response.ok) {
               // ジョブIDを取得してポーリング開始
               if (result.job_id) {
-                pollJobResult(result.job_id);
+                pollJobResultModal(result.job_id);
               } else {
-                displayJobResult(result);
+                showExecutionResults(result);
               }
             } else {
               alert(`ジョブ実行に失敗しました: ${result.detail || 'エラーが発生しました'}`);
             }
           } catch (error) {
             alert(`ジョブ実行に失敗しました: ${error.message}`);
-          } finally {
-            button.disabled = false;
-            button.innerHTML = originalText;
           }
         }
 
-        // ジョブ結果をポーリング
+        // ジョブ結果をポーリング（メインページ用）
         async function pollJobResult(jobId) {
           const maxAttempts = 60; // 最大60回試行（5分間）
           let attempts = 0;
@@ -735,10 +962,12 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
                 if (job.status === 'completed') {
                   // ジョブの結果を取得
                   const jobResults = await fetchJobResults(jobId);
+                  console.log('Job results from fetchJobResults:', jobResults); // デバッグ用
+                  
                   displayJobResult({
-                    total_requests: job.progress.total_requests,
-                    successful_requests: job.progress.successful_requests,
-                    failed_requests: job.progress.failed_requests,
+                    total_requests: job.progress?.total_requests || jobResults.length,
+                    successful_requests: job.progress?.successful_requests || jobResults.filter(r => r.http_response?.status_code && r.http_response.status_code >= 200 && r.http_response.status_code < 400).length,
+                    failed_requests: job.progress?.failed_requests || jobResults.filter(r => r.http_response?.error || !r.http_response?.status_code).length,
                     results: jobResults
                   });
                 } else {
@@ -782,6 +1011,200 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
           }, 5000); // 5秒間隔でポーリング
         }
 
+        // ジョブ結果をポーリング（モーダル用）
+        async function pollJobResultModal(jobId) {
+          const maxAttempts = 60; // 最大60回試行（5分間）
+          let attempts = 0;
+          
+          // 実行中メッセージを表示
+          const resultModal = new bootstrap.Modal(document.getElementById('resultModal'));
+          const resultsDiv = document.getElementById('modal-execution-results');
+          resultsDiv.innerHTML = `
+            <div class="text-center p-4">
+              <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">実行中...</span>
+              </div>
+              <p class="mt-2">ジョブ実行中... (${attempts}/${maxAttempts})</p>
+              <small class="text-muted">ジョブID: ${jobId.substring(0, 8)}...</small>
+            </div>
+          `;
+          resultModal.show();
+
+          const pollInterval = setInterval(async () => {
+            attempts++;
+            
+            try {
+              const response = await fetch(`/api/jobs/${jobId}`);
+              const job = await response.json();
+              
+              // 実行中メッセージを更新
+              resultsDiv.innerHTML = `
+                <div class="text-center p-4">
+                  <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">実行中...</span>
+                  </div>
+                  <p class="mt-2">ジョブ実行中... (${attempts}/${maxAttempts})</p>
+                  <p class="text-muted">ステータス: ${getJobStatusText(job.status)}</p>
+                  <p class="text-muted">進捗: ${job.progress?.completed_requests || 0}/${job.progress?.total_requests || 0} (${job.progress?.progress_percentage?.toFixed(1) || 0}%)</p>
+                  <small class="text-muted">ジョブID: ${jobId.substring(0, 8)}...</small>
+                </div>
+              `;
+              
+              // ジョブが完了したかチェック
+              if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+                clearInterval(pollInterval);
+                
+                if (job.status === 'completed') {
+                  // 結果データを取得して表示
+                  try {
+                    const resultsResponse = await fetch(`/api/jobs/${jobId}/results`);
+                    const resultsData = await resultsResponse.json();
+                    
+                    console.log('Results data from API:', resultsData); // デバッグ用
+                    
+                    // resultsDataが配列かオブジェクトかをチェック
+                    let results = [];
+                    if (Array.isArray(resultsData)) {
+                      results = resultsData;
+                    } else if (resultsData.results) {
+                      results = resultsData.results;
+                    } else if (resultsData.items) {
+                      results = resultsData.items;
+                    }
+                    
+                    console.log('Processed results:', results); // デバッグ用
+                    
+                    showExecutionResults({
+                      total_requests: job.progress?.total_requests || results.length,
+                      successful_requests: job.progress?.successful_requests || results.filter(r => r.http_response?.status_code && r.http_response.status_code >= 200 && r.http_response.status_code < 400).length,
+                      failed_requests: job.progress?.failed_requests || results.filter(r => r.http_response?.error || !r.http_response?.status_code).length,
+                      results: results
+                    });
+                  } catch (error) {
+                    console.error('結果データの取得に失敗しました:', error);
+                    resultsDiv.innerHTML = `
+                      <div class="alert alert-warning">
+                        <h5><i class="bi bi-exclamation-triangle"></i> 警告</h5>
+                        <p>ジョブは完了しましたが、結果データの取得に失敗しました。</p>
+                        <small>ジョブID: ${jobId}</small>
+                      </div>
+                    `;
+                  }
+                } else {
+                  resultsDiv.innerHTML = `
+                    <div class="alert alert-danger">
+                      <h5><i class="bi bi-exclamation-triangle"></i> ジョブ実行失敗</h5>
+                      <p>ジョブが${getJobStatusText(job.status)}状態で終了しました。</p>
+                      <small>ジョブID: ${jobId}</small>
+                    </div>
+                  `;
+                }
+              }
+              
+              // 最大試行回数に達した場合
+              if (attempts >= maxAttempts) {
+                clearInterval(pollInterval);
+                resultsDiv.innerHTML = `
+                  <div class="alert alert-warning">
+                    <h5><i class="bi bi-clock"></i> タイムアウト</h5>
+                    <p>ジョブの実行がタイムアウトしました。後で履歴ページで結果を確認してください。</p>
+                    <small>ジョブID: ${jobId}</small>
+                  </div>
+                `;
+              }
+              
+            } catch (error) {
+              console.error('ジョブ状態の取得に失敗しました:', error);
+              attempts++;
+              
+              if (attempts >= maxAttempts) {
+                clearInterval(pollInterval);
+                resultsDiv.innerHTML = `
+                  <div class="alert alert-danger">
+                    <h5><i class="bi bi-exclamation-triangle"></i> エラー</h5>
+                    <p>ジョブ状態の取得に失敗しました。</p>
+                    <small>ジョブID: ${jobId}</small>
+                  </div>
+                `;
+              }
+            }
+          }, 5000); // 5秒間隔でポーリング
+        }
+
+        // 実行結果をモーダルで表示
+        function showExecutionResults(result) {
+          console.log('showExecutionResults called with:', result); // デバッグ用
+          
+          // 統計情報を更新
+          document.getElementById('modal-total-executed').textContent = result.total_requests || 0;
+          document.getElementById('modal-successful-executed').textContent = result.successful_requests || 0;
+          document.getElementById('modal-failed-executed').textContent = result.failed_requests || 0;
+          
+          const successRate = result.total_requests > 0 ? 
+            ((result.successful_requests || 0) / result.total_requests * 100).toFixed(1) + '%' : '0%';
+          document.getElementById('modal-success-rate').textContent = successRate;
+          
+          // 詳細結果を表示
+          const resultsDiv = document.getElementById('modal-execution-results');
+          if (result.results && result.results.length > 0) {
+            let html = '<div class="table-responsive"><table class="table table-sm table-striped">';
+            html += '<thead><tr><th>#</th><th>ステータス</th><th>レスポンス時間</th><th>URL</th><th>エラー</th></tr></thead><tbody>';
+            
+            result.results.forEach((req, index) => {
+              console.log(`Result ${index + 1}:`, req); // デバッグ用
+              
+              // http_response が存在するかチェック
+              const httpResponse = req.http_response || req;
+              const isSuccess = httpResponse.status_code && httpResponse.status_code >= 200 && httpResponse.status_code < 400;
+              const statusClass = isSuccess ? 'text-success' : 'text-danger';
+              
+              // ステータスコードの処理
+              let statusText;
+              if (httpResponse.status_code) {
+                statusText = `HTTP ${httpResponse.status_code}`;
+              } else if (httpResponse.error) {
+                statusText = 'エラー';
+              } else {
+                statusText = 'N/A';
+              }
+              
+              // レスポンス時間の処理
+              let elapsedTime = 'N/A';
+              if (httpResponse.elapsed_time !== undefined && httpResponse.elapsed_time !== null) {
+                elapsedTime = httpResponse.elapsed_time.toFixed(3) + 's';
+              }
+              
+              // URLの処理
+              let url = httpResponse.url || 'N/A';
+              
+              // エラーの処理
+              let error = httpResponse.error || '-';
+              
+              html += `
+                <tr>
+                  <td>${index + 1}</td>
+                  <td class="${statusClass}">
+                    <i class="bi bi-${isSuccess ? 'check' : 'x'}"></i>
+                    ${statusText}
+                  </td>
+                  <td>${elapsedTime}</td>
+                  <td class="text-truncate" style="max-width: 200px;" title="${url}">${url}</td>
+                  <td class="text-truncate" style="max-width: 150px;" title="${error}">${error}</td>
+                </tr>
+              `;
+            });
+            
+            html += '</tbody></table></div>';
+            resultsDiv.innerHTML = html;
+          } else {
+            resultsDiv.innerHTML = `
+              <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i> 実行結果がありません。
+              </div>
+            `;
+          }
+        }
+
         // ジョブステータスの日本語表示
         function getJobStatusText(status) {
           const texts = {
@@ -803,7 +1226,19 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
               return [];
             }
             const data = await response.json();
-            return data.results || [];
+            console.log('fetchJobResults raw data:', data); // デバッグ用
+            
+            // データ構造を確認して適切な配列を返す
+            if (Array.isArray(data)) {
+              return data;
+            } else if (data.results && Array.isArray(data.results)) {
+              return data.results;
+            } else if (data.items && Array.isArray(data.items)) {
+              return data.items;
+            } else {
+              console.warn('Unexpected data structure:', data);
+              return [];
+            }
           } catch (error) {
             console.error('ジョブ結果の取得エラー:', error);
             return [];
@@ -811,6 +1246,7 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
         }
 
     function displayJobResult(result) {
+      console.log('displayJobResult called with:', result); // デバッグ用
       const resultDiv = document.getElementById('result');
       
       let html = `
@@ -838,22 +1274,45 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
 
       if (result.results && result.results.length > 0) {
         result.results.forEach((req, index) => {
-          const isSuccess = req.success;
+          console.log(`displayJobResult item ${index + 1}:`, req); // デバッグ用
+          
+          // http_response が存在するかチェック
+          const httpResponse = req.http_response || req;
+          const isSuccess = httpResponse.status_code && httpResponse.status_code >= 200 && httpResponse.status_code < 400;
           const statusClass = isSuccess ? 'text-success' : 'text-danger';
-          const statusText = isSuccess ? 
-            `HTTP ${req.status_code || 'N/A'}` : 
-            'エラー';
+          
+          // ステータスコードの処理
+          let statusText;
+          if (httpResponse.status_code) {
+            statusText = `HTTP ${httpResponse.status_code}`;
+          } else if (httpResponse.error) {
+            statusText = 'エラー';
+          } else {
+            statusText = 'N/A';
+          }
+          
+          // レスポンス時間の処理
+          let elapsedTime = 'N/A';
+          if (httpResponse.elapsed_time !== undefined && httpResponse.elapsed_time !== null) {
+            elapsedTime = httpResponse.elapsed_time.toFixed(3) + 's';
+          }
+          
+          // URLの処理
+          let url = httpResponse.url || 'N/A';
+          
+          // エラーの処理
+          let error = httpResponse.error || '-';
           
           html += `
             <tr>
-              <td>${req.request_number}</td>
+              <td>${index + 1}</td>
               <td class="${statusClass}">
                 <i class="bi bi-${isSuccess ? 'check' : 'x'}"></i>
                 ${statusText}
               </td>
-              <td>${req.elapsed_time ? req.elapsed_time.toFixed(3) + 's' : 'N/A'}</td>
-              <td>${req.url || 'N/A'}</td>
-              <td>${req.error_message || '-'}</td>
+              <td>${elapsedTime}</td>
+              <td class="text-truncate" style="max-width: 200px;" title="${url}">${url}</td>
+              <td class="text-truncate" style="max-width: 150px;" title="${error}">${error}</td>
             </tr>
           `;
         });
