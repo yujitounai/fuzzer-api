@@ -83,13 +83,14 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
    - Build Command: `pip install -r requirements.txt`
    - Start Command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
 
-3. **環境変数設定**
+3. **環境変数設定（SQLiteデプロイ）**
    - `ENVIRONMENT`: `production`
-   - `DATABASE_URL`: PostgreSQL接続URL
+   - `DATABASE_URL`: `sqlite:///./fuzzer_requests.db`
+   - `PYTHON_VERSION`: `3.11.9`
 
-4. **PostgreSQLデータベース作成**
-   - Renderで新しいPostgreSQLサービスを作成
-   - External Database URLを環境変数に設定
+4. **データベース設定**
+   - **SQLite**: シンプルデプロイ（推奨）- 設定不要
+   - **PostgreSQL**: 本格運用時のみ - 別途PostgreSQLサービス作成が必要
 
 ## 使用方法
 
