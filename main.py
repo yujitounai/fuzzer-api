@@ -1558,11 +1558,16 @@ async def get_job_result_detail(job_id: str, result_id: int, db: Session = Depen
         raise HTTPException(status_code=500, detail=f"結果詳細取得エラー: {str(e)}")
 
 if __name__ == "__main__":
+    import os
+    
     # データベーステーブルを作成
     db_manager.create_tables()
     
     # 開発サーバーを起動
     # host="0.0.0.0" で全てのインターフェースからアクセス可能
-    # port=8000 でポート8000を使用
-    # reload=True でコード変更時に自動リロード
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True) 
+    # PORTは環境変数から取得（Renderで自動設定される）
+    port = int(os.getenv("PORT", 8000))
+    
+    # 本番環境では reload=False を設定
+    is_production = os.getenv("ENVIRONMENT") == "production"
+    uvicorn.run(app, host="0.0.0.0", port=port, reload=not is_production) 

@@ -64,6 +64,33 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 サーバーは `http://localhost:8000` で起動します。
 
+## デプロイ
+
+### Renderへのデプロイ
+
+本プロジェクトはRenderに簡単にデプロイできます。詳細な手順は [`DEPLOY.md`](DEPLOY.md) を参照してください。
+
+#### 簡単デプロイ手順
+
+1. **GitHubリポジトリ作成**
+   ```bash
+   git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPOSITORY.git
+   git push -u origin main
+   ```
+
+2. **Render設定**
+   - Environment: Python 3
+   - Build Command: `pip install -r requirements.txt`
+   - Start Command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+
+3. **環境変数設定**
+   - `ENVIRONMENT`: `production`
+   - `DATABASE_URL`: PostgreSQL接続URL
+
+4. **PostgreSQLデータベース作成**
+   - Renderで新しいPostgreSQLサービスを作成
+   - External Database URLを環境変数に設定
+
 ## 使用方法
 
 ### Webインターフェース

@@ -347,35 +347,30 @@ class HTTPClient:
                 from urllib.parse import urlparse
                 parsed_url = urlparse(request_url)
                 path = parsed_url.path
+                
+                # クエリストリングとフラグメントを結合して一括処理
+                query_and_fragment = ""
                 if parsed_url.query:
-                    # クエリストリングでスペースを+に、#を%23に変換
-                    encoded_query = self.encode_url_query(parsed_url.query)
-                    path += '?' + encoded_query
+                    query_and_fragment += "?" + parsed_url.query
                 if parsed_url.fragment:
-                    # フラグメントでスペースを+に、#を%23に変換
-                    encoded_fragment = self.encode_url_query(parsed_url.fragment)
-                    path += '#' + encoded_fragment
+                    query_and_fragment += "#" + parsed_url.fragment
+                
+                # 機械的にスペースを+に、#を%23に変換
+                if query_and_fragment:
+                    encoded_query_fragment = self.encode_url_query(query_and_fragment)
+                    path += encoded_query_fragment
             else:
                 # 相対パスの場合はそのまま使用
                 path = request_url
                 if not path.startswith('/'):
                     path = '/' + path
                 
-                # 相対パスでもクエリストリングとフラグメントを処理
+                # ?以降の部分を一括でエンコーディング処理
                 if '?' in path:
                     base_path, query_part = path.split('?', 1)
-                    if '#' in query_part:
-                        query, fragment = query_part.split('#', 1)
-                        encoded_query = self.encode_url_query(query)
-                        encoded_fragment = self.encode_url_query(fragment)
-                        path = base_path + '?' + encoded_query + '#' + encoded_fragment
-                    else:
-                        encoded_query = self.encode_url_query(query_part)
-                        path = base_path + '?' + encoded_query
-                elif '#' in path:
-                    base_path, fragment = path.split('#', 1)
-                    encoded_fragment = self.encode_url_query(fragment)
-                    path = base_path + '#' + encoded_fragment
+                    # 機械的にスペースを+に、#を%23に変換
+                    encoded_query_part = self.encode_url_query(query_part)
+                    path = base_path + '?' + encoded_query_part
             
             # 最終的なURLを構築
             url = f"{config.scheme}://{host_header}{path}"

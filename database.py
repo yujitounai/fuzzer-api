@@ -12,15 +12,25 @@ from sqlalchemy.sql import func
 from datetime import datetime
 from typing import List, Optional
 import json
+import os
 
-# データベースURL（SQLiteを使用）
-DATABASE_URL = "sqlite:///./fuzzer_requests.db"
+# 環境変数からデータベースURLを取得
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./fuzzer_requests.db")
+
+# PostgreSQLのURLをSQLAlchemy用に修正（必要に応じて）
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 # SQLAlchemyエンジンの作成
-engine = create_engine(
-    DATABASE_URL, 
-    connect_args={"check_same_thread": False}  # SQLite用の設定
-)
+if DATABASE_URL.startswith("sqlite"):
+    # SQLite用の設定
+    engine = create_engine(
+        DATABASE_URL, 
+        connect_args={"check_same_thread": False}
+    )
+else:
+    # PostgreSQL用の設定
+    engine = create_engine(DATABASE_URL)
 
 # セッションクラスの作成
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
