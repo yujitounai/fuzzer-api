@@ -730,6 +730,12 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
       `;
 
       try {
+        // ログイン状態を確認
+        if (!window.authManager.isLoggedIn()) {
+          window.authManager.showLoginModal();
+          return;
+        }
+
         // 新しい直感的なAPIエンドポイントを使用
         const intuitiveBody = {
           template: template,
@@ -741,11 +747,8 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
           }))
         };
         
-        const response = await fetch('/api/intuitive', {
+        const response = await window.authManager.apiRequest('/api/intuitive', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
           body: JSON.stringify(intuitiveBody)
         });
 
@@ -881,12 +884,15 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
           executeModal.hide();
 
           // 実行開始
-          try {
-            const response = await fetch('/api/execute-requests', {
+                      try {
+            // ログイン状態を確認
+            if (!window.authManager.isLoggedIn()) {
+              window.authManager.showLoginModal();
+              return;
+            }
+
+            const response = await window.authManager.apiRequest('/api/execute-requests', {
               method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
               body: JSON.stringify({
                 request_id: lastRequestResult.request_id,
                 http_config: {
@@ -940,7 +946,7 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
             attempts++;
             
             try {
-              const response = await fetch(`/api/jobs/${jobId}`);
+              const response = await authenticatedFetch(`/api/jobs/${jobId}`);
               const job = await response.json();
               
               // 実行中メッセージを更新
@@ -1034,7 +1040,7 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
             attempts++;
             
             try {
-              const response = await fetch(`/api/jobs/${jobId}`);
+              const response = await authenticatedFetch(`/api/jobs/${jobId}`);
               const job = await response.json();
               
               // 実行中メッセージを更新
@@ -1057,7 +1063,7 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
                 if (job.status === 'completed') {
                   // 結果データを取得して表示
                   try {
-                    const resultsResponse = await fetch(`/api/jobs/${jobId}/results`);
+                    const resultsResponse = await authenticatedFetch(`/api/jobs/${jobId}/results`);
                     const resultsData = await resultsResponse.json();
                     
                     console.log('Results data from API:', resultsData); // デバッグ用
@@ -1267,7 +1273,7 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
         // ジョブの結果を取得
         async function fetchJobResults(jobId) {
           try {
-            const response = await fetch(`/api/jobs/${jobId}/results`);
+            const response = await authenticatedFetch(`/api/jobs/${jobId}/results`);
             if (!response.ok) {
               console.error('ジョブ結果の取得に失敗しました:', response.status);
               return [];
@@ -1440,7 +1446,37 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
       
       // デフォルトのテンプレートも読み込み
       loadSniperExample();
+      
+      // 認証状態確認の警告メッセージ
+      setTimeout(() => {
+        if (!window.authManager || !window.authManager.isLoggedIn()) {
+          const alertDiv = document.createElement('div');
+          alertDiv.className = 'alert alert-warning alert-dismissible fade show position-fixed top-0 start-50 translate-middle-x';
+          alertDiv.style.zIndex = '9999';
+          alertDiv.style.marginTop = '20px';
+          alertDiv.innerHTML = `
+            <strong><i class="bi bi-exclamation-triangle"></i> 認証が必要です！</strong>
+            APIを使用するにはログインしてください。
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+          `;
+          document.body.appendChild(alertDiv);
+        }
+      }, 1000);
     });
+    
+    // 認証付きAPI呼び出し関数
+    async function authenticatedFetch(url, options = {}) {
+      if (!window.authManager || !window.authManager.isLoggedIn()) {
+        if (window.authManager) {
+          window.authManager.showLoginModal();
+        }
+        throw new Error('認証が必要です');
+      }
+      return await window.authManager.apiRequest(url, options);
+    }
   </script>
+  
+  <!-- Auth JavaScript -->
+  <script src="/static/auth.js"></script>
 </body>
 </html>

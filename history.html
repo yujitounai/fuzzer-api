@@ -764,7 +764,13 @@
         // 統計情報を読み込み
         async function loadStatistics() {
             try {
-                const response = await fetch('/api/statistics');
+                if (!window.authManager || !window.authManager.isLoggedIn()) {
+                    document.getElementById('total-requests').textContent = 'ログインが必要';
+                    document.getElementById('total-generated').textContent = 'ログインが必要';
+                    return;
+                }
+                
+                const response = await window.authManager.apiRequest('/api/statistics');
                 const stats = await response.json();
                 
                 document.getElementById('total-requests').textContent = stats.total_fuzzer_requests;
@@ -803,7 +809,18 @@
             historyList.innerHTML = '';
             
             try {
-                const response = await fetch(`/api/history?limit=${currentLimit}&offset=${currentPage * currentLimit}`);
+                if (!window.authManager || !window.authManager.isLoggedIn()) {
+                    historyList.innerHTML = `
+                        <div class="text-center p-4">
+                            <i class="fas fa-lock fa-3x text-muted mb-3"></i>
+                            <h5>ログインが必要です</h5>
+                            <p class="text-muted">履歴を表示するにはログインしてください。</p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                const response = await window.authManager.apiRequest(`/api/history?limit=${currentLimit}&offset=${currentPage * currentLimit}`);
                 const history = await response.json();
                 
                 if (history.length === 0) {
@@ -892,7 +909,12 @@
             }
             
             try {
-                const response = await fetch(`/api/history/${requestId}`, {
+                if (!window.authManager || !window.authManager.isLoggedIn()) {
+                    window.authManager.showLoginModal();
+                    return;
+                }
+                
+                const response = await window.authManager.apiRequest(`/api/history/${requestId}`, {
                     method: 'DELETE'
                 });
                 
@@ -1178,7 +1200,7 @@
                 attempts++;
                 
                 try {
-                    const response = await fetch(`/api/jobs/${jobId}`);
+                    const response = await window.authManager.apiRequest(`/api/jobs/${jobId}`);
                     const job = await response.json();
                     
                     // 実行中メッセージを更新
@@ -1206,7 +1228,7 @@
                         if (job.status === 'completed') {
                             // 結果データを取得して表示
                             try {
-                                const resultsResponse = await fetch(`/api/jobs/${jobId}/results`);
+                                const resultsResponse = await window.authManager.apiRequest(`/api/jobs/${jobId}/results`);
                                 const resultsData = await resultsResponse.json();
                                 
                             showExecutionResults({
@@ -1532,7 +1554,7 @@
             currentRequestId = requestId; // リクエストIDを保存
             
             try {
-                const response = await fetch(`/api/history/${requestId}`);
+                const response = await window.authManager.apiRequest(`/api/history/${requestId}`);
                 const detail = await response.json();
                 
                 const detailContent = document.getElementById('detail-content');
@@ -1612,7 +1634,7 @@
             jobsList.innerHTML = '';
             
             try {
-                const response = await fetch('/api/jobs');
+                const response = await window.authManager.apiRequest('/api/jobs');
                 const data = await response.json();
                 
                 // APIレスポンスの形式を確認して適切に処理
@@ -1711,7 +1733,7 @@
 
         async function loadJobStatistics() {
             try {
-                const response = await fetch('/api/jobs/statistics');
+                const response = await window.authManager.apiRequest('/api/jobs/statistics');
                 const stats = await response.json();
                 
                 const content = document.getElementById('job-statistics-content');
@@ -1832,7 +1854,7 @@
 
         async function showRequestDetail(jobId, requestIndex) {
             try {
-                const response = await fetch(`/api/jobs/${jobId}`);
+                const response = await window.authManager.apiRequest(`/api/jobs/${jobId}`);
                 const job = await response.json();
                 
                 if (!job.results || requestIndex >= job.results.length) {
@@ -1852,7 +1874,7 @@
                 // 結果データにプレースホルダ情報がない場合のみAPIを呼び出し
                 if (placeholderInfo.placeholder === 'N/A' && placeholderInfo.payload === 'N/A' && placeholderInfo.position === 'N/A' && job.request_id) {
                     try {
-                        const requestDataResponse = await fetch(`/api/history/${job.request_id}`);
+                        const requestDataResponse = await window.authManager.apiRequest(`/api/history/${job.request_id}`);
                         const requestData = await requestDataResponse.json();
                         
                         if (requestData.requests && requestIndex < requestData.requests.length) {
@@ -1990,7 +2012,7 @@
         // 新しいAPI構造に対応したリクエスト詳細表示
         async function showRequestDetailNew(jobId, requestNumber) {
             try {
-                const response = await fetch(`/api/jobs/${jobId}/results/${requestNumber}`);
+                const response = await window.authManager.apiRequest(`/api/jobs/${jobId}/results/${requestNumber}`);
                 const result = await response.json();
                 
                 const httpResponse = result.http_response || {};
@@ -2354,11 +2376,11 @@
         async function showJobDetail(jobId) {
             try {
                 // ジョブサマリー情報を取得
-                const jobResponse = await fetch(`/api/jobs/${jobId}`);
+                const jobResponse = await window.authManager.apiRequest(`/api/jobs/${jobId}`);
                 const job = await jobResponse.json();
                 
                 // 結果リストを取得（最初の50件）
-                const resultsResponse = await fetch(`/api/jobs/${jobId}/results?limit=50&offset=0`);
+                const resultsResponse = await window.authManager.apiRequest(`/api/jobs/${jobId}/results?limit=50&offset=0`);
                 const resultsData = await resultsResponse.json();
                 
                 const content = document.getElementById('job-detail-content');
@@ -2645,7 +2667,7 @@
             }
             
             try {
-                const response = await fetch(`/api/jobs/${jobId}/stop`, {
+                const response = await window.authManager.apiRequest(`/api/jobs/${jobId}/stop`, {
                     method: 'POST'
                 });
                 
@@ -2672,7 +2694,7 @@
             }
             
             try {
-                const response = await fetch(`/api/jobs/${jobId}/resume`, {
+                const response = await window.authManager.apiRequest(`/api/jobs/${jobId}/resume`, {
                     method: 'POST'
                 });
                 
@@ -2704,7 +2726,7 @@
             }
             
             try {
-                const response = await fetch(`/api/jobs/${jobId}/stop`, {
+                const response = await window.authManager.apiRequest(`/api/jobs/${jobId}/stop`, {
                     method: 'POST'
                 });
                 
@@ -2739,7 +2761,7 @@
             }
             
             try {
-                const response = await fetch(`/api/jobs/cleanup?max_age_hours=${maxAgeHours}`, {
+                const response = await window.authManager.apiRequest(`/api/jobs/cleanup?max_age_hours=${maxAgeHours}`, {
                     method: 'POST'
                 });
                 
@@ -2772,7 +2794,7 @@
             // 5秒間隔でジョブ状態を監視
             jobMonitoringIntervals[jobId] = setInterval(async () => {
                 try {
-                    const response = await fetch(`/api/jobs/${jobId}`);
+                    const response = await window.authManager.apiRequest(`/api/jobs/${jobId}`);
                     if (response.ok) {
                         const job = await response.json();
                         console.log(`ジョブ ${jobId} 状態: ${job.status}`);
@@ -2869,5 +2891,8 @@
             stopAllJobMonitoring();
         });
     </script>
+    
+    <!-- Auth JavaScript -->
+    <script src="/static/auth.js"></script>
 </body>
 </html> 

@@ -5,7 +5,7 @@
 SQLAlchemyデータベースモデルとセッション管理機能を提供します。
 """
 
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey, JSON
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey, JSON, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.sql import func
@@ -167,6 +167,22 @@ class JobResult(Base):
     def get_http_response(self) -> dict:
         """保存されたHTTPレスポンスを取得"""
         return json.loads(self.http_response) if self.http_response else {}
+
+class User(Base):
+    """
+    ユーザーテーブル
+    
+    このテーブルは、認証システムのユーザー情報を保存します。
+    """
+    __tablename__ = "users"
+    
+    id = Column(Integer, primary_key=True, index=True, comment="ユーザーの一意識別子")
+    username = Column(String(50), unique=True, nullable=False, index=True, comment="ユーザー名")
+    email = Column(String(100), unique=True, nullable=False, index=True, comment="メールアドレス")
+    hashed_password = Column(String(255), nullable=False, comment="ハッシュ化されたパスワード")
+    is_active = Column(Boolean, default=True, comment="アクティブフラグ")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="作成日時")
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), comment="最終更新日時")
 
 class DatabaseManager:
     """
@@ -548,4 +564,13 @@ class DatabaseManager:
         }
 
 # グローバルなデータベースマネージャーインスタンス
-db_manager = DatabaseManager() 
+db_manager = DatabaseManager()
+
+# データベースセッションを取得する関数
+def get_db():
+    """データベースセッションを取得"""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close() 

@@ -27,17 +27,62 @@ import asyncio
 from sqlalchemy.orm import Session
 
 # データベース関連のインポート
-from database import db_manager, FuzzerRequest, GeneratedRequest, Job as DBJob, JobResult as DBJobResult
+from database import db_manager, FuzzerRequest, GeneratedRequest, Job as DBJob, JobResult as DBJobResult, User, get_db
 
 # HTTPリクエスト送信関連のインポート
 from http_client import RequestExecutor, HTTPRequestConfig
 from job_manager import job_manager
+
+# 認証関連のインポート
+from auth import auth_manager, get_current_user, get_current_active_user
 
 app = FastAPI(
     title="プレースホルダ置換API",
     description="Burp Suite Intruderの4つの攻撃戦略を実装したAPI",
     version="1.0.0"
 )
+
+# ビルトインアカウントを作成する関数
+def create_builtin_account():
+    """アプリケーション起動時にビルトインアカウントを作成"""
+    try:
+        db = next(get_db())
+        builtin_username = "admin"
+        builtin_email = "admin@example.com"
+        builtin_password = "admin123"
+        
+        # ビルトインアカウントが既に存在するかチェック
+        existing_user = auth_manager.get_user_by_username(db, builtin_username)
+        if existing_user:
+            print(f"ビルトインアカウント '{builtin_username}' は既に存在しています")
+            return existing_user
+        
+        # ビルトインアカウントを作成
+        print(f"ビルトインアカウント '{builtin_username}' を作成しています...")
+        user = auth_manager.create_user(
+            db=db,
+            username=builtin_username,
+            email=builtin_email,
+            password=builtin_password
+        )
+        print(f"ビルトインアカウント '{builtin_username}' が正常に作成されました")
+        return user
+        
+    except Exception as e:
+        print(f"ビルトインアカウントの作成中にエラーが発生しました: {e}")
+        return None
+    finally:
+        if 'db' in locals():
+            db.close()
+
+# アプリケーション起動時のイベント
+@app.on_event("startup")
+async def startup_event():
+    """アプリケーション起動時の処理"""
+    print("アプリケーションを起動しています...")
+    # ビルトインアカウントを作成
+    create_builtin_account()
+    print("アプリケーションの起動が完了しました")
 
 # APIルーターを作成
 from fastapi import APIRouter
@@ -53,14 +98,7 @@ app.mount("/static", StaticFiles(directory="."), name="static")
 # APIルーターをアプリケーションに登録
 app.include_router(api_router)
 
-# データベースセッションの依存関係
-def get_db():
-    """データベースセッションを取得する依存関係"""
-    db = db_manager.SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# 注意: get_dbはdatabase.pyから直接インポートして使用
 
 class AttackStrategy(str, Enum):
     SNIPER = "sniper"
@@ -429,6 +467,72 @@ class JobListResponseModel(BaseModel):
     jobs: List[Dict[str, Any]]
     total: int
 
+# 認証関連のPydanticモデル
+class UserRegisterRequest(BaseModel):
+    """
+    ユーザー登録リクエストの定義
+    
+    Attributes:
+        username (str): ユーザー名
+        email (str): メールアドレス
+        password (str): パスワード
+    """
+    username: str
+    email: str
+    password: str
+
+class UserLoginRequest(BaseModel):
+    """
+    ユーザーログインリクエストの定義
+    
+    Attributes:
+        username (str): ユーザー名
+        password (str): パスワード
+    """
+    username: str
+    password: str
+
+class UserResponse(BaseModel):
+    """
+    ユーザー情報レスポンスの定義
+    
+    Attributes:
+        id (int): ユーザーID
+        username (str): ユーザー名
+        email (str): メールアドレス
+        is_active (bool): アクティブフラグ
+        created_at (str): 作成日時
+        updated_at (str): 更新日時
+    """
+    id: int
+    username: str
+    email: str
+    is_active: bool
+    created_at: str
+    updated_at: str
+
+class Token(BaseModel):
+    """
+    トークンレスポンスの定義
+    
+    Attributes:
+        access_token (str): アクセストークン
+        token_type (str): トークンタイプ
+        user (UserResponse): ユーザー情報
+    """
+    access_token: str
+    token_type: str
+    user: UserResponse
+
+class TokenData(BaseModel):
+    """
+    トークンデータの定義
+    
+    Attributes:
+        user_id (Optional[int]): ユーザーID
+    """
+    user_id: Optional[int] = None
+
 class FuzzerEngine:
     def __init__(self):
         pass
@@ -737,7 +841,7 @@ async def execute_single_request_async(request_data: Dict[str, Any], http_config
         }
 
 @app.post("/api/replace-placeholders", response_model=PlaceholderResponse)
-async def replace_placeholders(request: PlaceholderRequest, db: Session = Depends(get_db)):
+async def replace_placeholders(request: PlaceholderRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """
     プレースホルダ置換APIエンドポイント
     
@@ -793,7 +897,7 @@ async def replace_placeholders(request: PlaceholderRequest, db: Session = Depend
         raise HTTPException(status_code=500, detail=f"内部エラー: {str(e)}")
 
 @app.post("/api/mutations", response_model=PlaceholderResponse)
-async def apply_mutations(request: MutationRequest, db: Session = Depends(get_db)):
+async def apply_mutations(request: MutationRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """
     変異ベースのプレースホルダ置換を実行
     
@@ -848,7 +952,7 @@ async def apply_mutations(request: MutationRequest, db: Session = Depends(get_db
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/intuitive", response_model=PlaceholderResponse)
-async def intuitive_replace_placeholders(request: IntuitiveRequest, db: Session = Depends(get_db)):
+async def intuitive_replace_placeholders(request: IntuitiveRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """
     直感的なプレースホルダ置換API
     
@@ -930,7 +1034,7 @@ async def root():
     }
 
 @app.get("/api/history", response_model=List[FuzzerRequestResponse])
-async def get_history(db: Session = Depends(get_db), limit: int = 50, offset: int = 0):
+async def get_history(db: Session = Depends(get_db), limit: int = 50, offset: int = 0, current_user: User = Depends(get_current_active_user)):
     """
     ファザーリクエストの履歴を取得するエンドポイント
     
@@ -958,7 +1062,7 @@ async def get_history(db: Session = Depends(get_db), limit: int = 50, offset: in
     return history
 
 @app.get("/api/history/{request_id}", response_model=PlaceholderResponse)
-async def get_request_detail(request_id: int, db: Session = Depends(get_db)):
+async def get_request_detail(request_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """
     特定のファザーリクエストの詳細を取得するエンドポイント
     
@@ -1021,7 +1125,7 @@ async def delete_request(request_id: int, db: Session = Depends(get_db)):
     return {"message": f"リクエストID {request_id} を削除しました"}
 
 @app.get("/api/statistics", response_model=StatisticsResponse)
-async def get_statistics(db: Session = Depends(get_db)):
+async def get_statistics(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """
     データベースの統計情報を取得するエンドポイント
     
@@ -1035,7 +1139,7 @@ async def get_statistics(db: Session = Depends(get_db)):
     return StatisticsResponse(**stats)
 
 @app.post("/api/execute-requests", response_model=JobResponseModel)
-async def execute_requests(request: ExecuteRequestModel, db: Session = Depends(get_db)):
+async def execute_requests(request: ExecuteRequestModel, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """
     リクエスト実行APIエンドポイント（JobManager使用）
     
@@ -1187,7 +1291,7 @@ async def execute_single_request(request: ExecuteSingleRequestModel, db: Session
         raise HTTPException(status_code=500, detail=f"リクエスト実行エラー: {str(e)}")
 
 @app.get("/api/jobs", response_model=JobListResponseModel)
-async def get_jobs():
+async def get_jobs(current_user: User = Depends(get_current_active_user)):
     """
     ジョブ一覧を取得するエンドポイント
     
@@ -1201,7 +1305,7 @@ async def get_jobs():
     )
 
 @app.get("/api/jobs/statistics")
-async def get_job_statistics():
+async def get_job_statistics(current_user: User = Depends(get_current_active_user)):
     """
     ジョブ統計情報を取得するエンドポイント
     """
@@ -1224,7 +1328,7 @@ async def get_job_statistics():
         }
 
 @app.get("/api/jobs/{job_id}", response_model=JobSummaryResponseModel)
-async def get_job_status(job_id: str, db: Session = Depends(get_db)):
+async def get_job_status(job_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """
     ジョブのサマリー情報を取得するエンドポイント
     
@@ -1383,6 +1487,109 @@ async def cleanup_jobs(max_age_hours: int = 24):
         "max_age_hours": max_age_hours
     }
 
+# 認証エンドポイント
+@app.post("/api/auth/register", response_model=UserResponse)
+async def register_user(request: UserRegisterRequest, db: Session = Depends(get_db)):
+    """
+    ユーザー登録
+    
+    Args:
+        request (UserRegisterRequest): ユーザー登録リクエスト
+        db (Session): データベースセッション
+    
+    Returns:
+        UserResponse: 登録されたユーザー情報
+    """
+    try:
+        # ユーザーを作成
+        user = auth_manager.create_user(
+            db=db,
+            username=request.username,
+            email=request.email,
+            password=request.password
+        )
+        
+        return UserResponse(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            is_active=user.is_active,
+            created_at=user.created_at.isoformat() if user.created_at else "",
+            updated_at=user.updated_at.isoformat() if user.updated_at else ""
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"ユーザー登録エラー: {str(e)}")
+
+@app.post("/api/auth/login", response_model=Token)
+async def login_user(request: UserLoginRequest, db: Session = Depends(get_db)):
+    """
+    ユーザーログイン
+    
+    Args:
+        request (UserLoginRequest): ログインリクエスト
+        db (Session): データベースセッション
+    
+    Returns:
+        Token: アクセストークンとユーザー情報
+    """
+    try:
+        # ユーザーを認証
+        user = auth_manager.authenticate_user(db, request.username, request.password)
+        if not user:
+            raise HTTPException(
+                status_code=401,
+                detail="ユーザー名またはパスワードが間違っています"
+            )
+        
+        if not user.is_active:
+            raise HTTPException(status_code=400, detail="非アクティブなユーザーです")
+        
+        # アクセストークンを作成
+        access_token = auth_manager.create_access_token(data={"sub": str(user.id)})
+        
+        user_response = UserResponse(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            is_active=user.is_active,
+            created_at=user.created_at.isoformat() if user.created_at else "",
+            updated_at=user.updated_at.isoformat() if user.updated_at else ""
+        )
+        
+        return Token(
+            access_token=access_token,
+            token_type="bearer",
+            user=user_response
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"ログインエラー: {str(e)}")
+
+@app.get("/api/auth/me", response_model=UserResponse)
+async def get_current_user_info(current_user: User = Depends(get_current_active_user)):
+    """
+    現在のユーザー情報を取得
+    
+    Args:
+        current_user (User): 現在のユーザー
+    
+    Returns:
+        UserResponse: ユーザー情報
+    """
+    return UserResponse(
+        id=current_user.id,
+        username=current_user.username,
+        email=current_user.email,
+        is_active=current_user.is_active,
+        created_at=current_user.created_at.isoformat() if current_user.created_at else "",
+        updated_at=current_user.updated_at.isoformat() if current_user.updated_at else ""
+    )
+
 @app.get("/test", response_class=HTMLResponse)
 async def test_page():
     """
@@ -1436,7 +1643,7 @@ async def history_page():
         raise HTTPException(status_code=404, detail="履歴ページが見つかりません")
 
 @app.get("/api/jobs/{job_id}/results", response_model=JobResultsResponseModel)
-async def get_job_results(job_id: str, db: Session = Depends(get_db), limit: int = 50, offset: int = 0):
+async def get_job_results(job_id: str, db: Session = Depends(get_db), limit: int = 50, offset: int = 0, current_user: User = Depends(get_current_active_user)):
     """
     ジョブの結果リストを取得するエンドポイント（ページネーション付き）
     
