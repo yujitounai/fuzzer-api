@@ -246,9 +246,9 @@
     function loadBatteringRamExample() {
       document.getElementById('strategy').value = 'battering_ram';
       if (templateCodeMirror) {
-        templateCodeMirror.setValue('username=<<username>>&password=<<password>>&email=<<email>>');
+        templateCodeMirror.setValue('GET /hack/normalxss.php?username=<<username>>&password=<<password>>&email=<<email>> HTTP/1.1\nHost: bogus.jp\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\nAccept-Encoding: gzip, deflate, br, zstd\nAccept-Language: ja,en-US;q=0.9,en;q=0.8');
       } else {
-        document.getElementById('template').value = 'username=<<username>>&password=<<password>>&email=<<email>>';
+        document.getElementById('template').value = 'GET /hack/normalxss.php?username=<<username>>&password=<<password>>&email=<<email>> HTTP/1.1\nHost: bogus.jp\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\nAccept-Encoding: gzip, deflate, br, zstd\nAccept-Language: ja,en-US;q=0.9,en;q=0.8';
       }
       document.getElementById('placeholders').value = 'username,password,email';
     }
@@ -733,11 +733,13 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
                 clearInterval(pollInterval);
                 
                 if (job.status === 'completed') {
+                  // ジョブの結果を取得
+                  const jobResults = await fetchJobResults(jobId);
                   displayJobResult({
-                    total_requests: job.total_requests,
-                    successful_requests: job.successful_requests,
-                    failed_requests: job.failed_requests,
-                    results: job.results || []
+                    total_requests: job.progress.total_requests,
+                    successful_requests: job.progress.successful_requests,
+                    failed_requests: job.progress.failed_requests,
+                    results: jobResults
                   });
                 } else {
                   resultDiv.innerHTML = `
@@ -792,6 +794,22 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
           return texts[status] || status;
         }
 
+        // ジョブの結果を取得
+        async function fetchJobResults(jobId) {
+          try {
+            const response = await fetch(`/api/jobs/${jobId}/results`);
+            if (!response.ok) {
+              console.error('ジョブ結果の取得に失敗しました:', response.status);
+              return [];
+            }
+            const data = await response.json();
+            return data.results || [];
+          } catch (error) {
+            console.error('ジョブ結果の取得エラー:', error);
+            return [];
+          }
+        }
+
     function displayJobResult(result) {
       const resultDiv = document.getElementById('result');
       
@@ -820,23 +838,22 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
 
       if (result.results && result.results.length > 0) {
         result.results.forEach((req, index) => {
-          const httpResponse = req.http_response || {};
-          const isSuccess = !httpResponse.error;
+          const isSuccess = req.success;
           const statusClass = isSuccess ? 'text-success' : 'text-danger';
           const statusText = isSuccess ? 
-            `HTTP ${httpResponse.status_code || 'N/A'}` : 
+            `HTTP ${req.status_code || 'N/A'}` : 
             'エラー';
           
           html += `
             <tr>
-              <td>${index + 1}</td>
+              <td>${req.request_number}</td>
               <td class="${statusClass}">
                 <i class="bi bi-${isSuccess ? 'check' : 'x'}"></i>
                 ${statusText}
               </td>
-              <td>${httpResponse.elapsed_time ? httpResponse.elapsed_time.toFixed(3) + 's' : 'N/A'}</td>
-              <td>${httpResponse.url || 'N/A'}</td>
-              <td>${httpResponse.error || '-'}</td>
+              <td>${req.elapsed_time ? req.elapsed_time.toFixed(3) + 's' : 'N/A'}</td>
+              <td>${req.url || 'N/A'}</td>
+              <td>${req.error_message || '-'}</td>
             </tr>
           `;
         });
