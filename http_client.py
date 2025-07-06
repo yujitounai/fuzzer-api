@@ -58,6 +58,23 @@ class HTTPClient:
         if self.session:
             await self.session.close()
     
+    def encode_url_query(self, query: str) -> str:
+        """
+        URL クエリストリング用のエンコーディング処理
+        
+        Args:
+            query (str): エンコードするクエリストリング
+            
+        Returns:
+            str: エンコードされたクエリストリング
+        """
+        # スペースを+に変換
+        encoded = query.replace(' ', '+')
+        # #を%23に変換
+        encoded = encoded.replace('#', '%23')
+        
+        return encoded
+    
     def parse_http_request(self, request_text: str) -> Dict[str, Any]:
         """
         HTTPリクエスト文字列を厳密に解析して、URL、メソッド、ヘッダー、ボディを抽出
@@ -74,13 +91,22 @@ class HTTPClient:
         
         # リクエストラインを解析
         request_line = lines[0].strip()
-        parts = request_line.split(' ')
-        if len(parts) < 2:
+        
+        # HTTPメソッドを抽出
+        method_end = request_line.find(' ')
+        if method_end == -1:
             raise ValueError("無効なリクエストラインです")
         
-        method = parts[0].upper()
-        url = parts[1]
-        version = parts[2] if len(parts) > 2 else "HTTP/1.1"
+        method = request_line[:method_end].upper()
+        
+        # バージョンを抽出（後ろから検索）
+        version_start = request_line.rfind(' HTTP/')
+        if version_start == -1:
+            version = "HTTP/1.1"
+            url = request_line[method_end + 1:]
+        else:
+            version = request_line[version_start + 1:]
+            url = request_line[method_end + 1:version_start]
         
         # ヘッダーを解析（複数行ヘッダーに対応）
         headers = {}
@@ -322,14 +348,34 @@ class HTTPClient:
                 parsed_url = urlparse(request_url)
                 path = parsed_url.path
                 if parsed_url.query:
-                    path += '?' + parsed_url.query
+                    # クエリストリングでスペースを+に、#を%23に変換
+                    encoded_query = self.encode_url_query(parsed_url.query)
+                    path += '?' + encoded_query
                 if parsed_url.fragment:
-                    path += '#' + parsed_url.fragment
+                    # フラグメントでスペースを+に、#を%23に変換
+                    encoded_fragment = self.encode_url_query(parsed_url.fragment)
+                    path += '#' + encoded_fragment
             else:
                 # 相対パスの場合はそのまま使用
                 path = request_url
                 if not path.startswith('/'):
                     path = '/' + path
+                
+                # 相対パスでもクエリストリングとフラグメントを処理
+                if '?' in path:
+                    base_path, query_part = path.split('?', 1)
+                    if '#' in query_part:
+                        query, fragment = query_part.split('#', 1)
+                        encoded_query = self.encode_url_query(query)
+                        encoded_fragment = self.encode_url_query(fragment)
+                        path = base_path + '?' + encoded_query + '#' + encoded_fragment
+                    else:
+                        encoded_query = self.encode_url_query(query_part)
+                        path = base_path + '?' + encoded_query
+                elif '#' in path:
+                    base_path, fragment = path.split('#', 1)
+                    encoded_fragment = self.encode_url_query(fragment)
+                    path = base_path + '#' + encoded_fragment
             
             # 最終的なURLを構築
             url = f"{config.scheme}://{host_header}{path}"
