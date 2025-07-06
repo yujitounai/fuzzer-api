@@ -86,7 +86,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 3. **環境変数設定（SQLiteデプロイ）**
    - `ENVIRONMENT`: `production`
    - `DATABASE_URL`: `sqlite:///./fuzzer_requests.db`
-   - `PYTHON_VERSION`: `3.11.9`
+   - `PYTHON_VERSION`: `3.11.11`
 
 4. **データベース設定**
    - **SQLite**: シンプルデプロイ（推奨）- 設定不要
