@@ -1209,10 +1209,10 @@
                                 const resultsResponse = await fetch(`/api/jobs/${jobId}/results`);
                                 const resultsData = await resultsResponse.json();
                                 
-                                showExecutionResults({
-                                    total_requests: job.progress.total_requests,
-                                    successful_requests: job.progress.successful_requests,
-                                    failed_requests: job.progress.failed_requests,
+                            showExecutionResults({
+                                total_requests: job.progress.total_requests,
+                                successful_requests: job.progress.successful_requests,
+                                failed_requests: job.progress.failed_requests,
                                     results: resultsData.results || []
                                 });
                             } catch (error) {
@@ -1882,19 +1882,19 @@
                             <div class="card">
                                 <div class="card-header">
                                     <h6 class="mb-0"><i class="fas fa-arrow-up text-primary"></i> リクエスト詳細</h6>
-                                </div>
+                        </div>
                                 <div class="card-body">
                                     <div class="mb-3">
                                         <label class="form-label">プレースホルダ情報:</label>
                                         <div class="table-responsive">
-                                            <table class="table table-sm">
+                            <table class="table table-sm">
                                                 <tr><th>プレースホルダ:</th><td><code>${placeholderInfo.placeholder}</code></td></tr>
                                                 <tr><th>ペイロード:</th><td><code>${placeholderInfo.payload}</code></td></tr>
                                                 <tr><th>位置:</th><td>${placeholderInfo.position}</td></tr>
-                                            </table>
-                                        </div>
-                                    </div>
-                                    
+                            </table>
+                        </div>
+                    </div>
+                    
                                     <div class="mb-3">
                                         <label class="form-label">リクエスト内容:</label>
                                         <div class="mb-2">
@@ -1926,7 +1926,7 @@
                                 <div class="card-body">
                                     <div class="mb-3">
                                         <label class="form-label">基本情報:</label>
-                                        <div class="table-responsive">
+                        <div class="table-responsive">
                                             <table class="table table-sm">
                                                 <tr>
                                                     <th>ステータスコード:</th>
@@ -1935,18 +1935,18 @@
                                                             ${httpResponse.status_code || 'N/A'}
                                                         </span>
                                                     </td>
-                                                </tr>
+                                    </tr>
                                                 <tr><th>URL:</th><td><small>${httpResponse.url || 'N/A'}</small></td></tr>
                                                 <tr><th>レスポンス時間:</th><td>${httpResponse.elapsed_time ? httpResponse.elapsed_time.toFixed(3) + 's' : 'N/A'}</td></tr>
                                                 <tr>
                                                     <th>エラー:</th>
                                                     <td class="text-danger">
                                                         ${httpResponse.error ? `<pre style="white-space: pre-wrap; font-size: 0.85em;">${escapeHtml(typeof httpResponse.error === 'string' ? httpResponse.error : JSON.stringify(httpResponse.error, null, 2))}</pre>` : '-'}
-                                                    </td>
-                                                </tr>
-                                            </table>
-                                        </div>
-                                    </div>
+                                                </td>
+                                            </tr>
+                            </table>
+                        </div>
+                        </div>
                                     
                                     ${httpResponse.headers ? `
                                         <div class="mb-3">
@@ -2849,6 +2849,19 @@
             
             // 初期状態を設定
             toggleRequestDelayInput();
+            
+            // URLクエリパラメータを確認して特定のジョブの詳細を表示
+            const urlParams = new URLSearchParams(window.location.search);
+            const jobId = urlParams.get('job');
+            
+            if (jobId) {
+                console.log(`URLパラメータからジョブID検出: ${jobId}`);
+                
+                // ページ読み込み後、少し待ってからジョブ詳細を表示
+                setTimeout(() => {
+                    showJobDetails(jobId);
+                }, 1000);
+            }
         });
 
         // ページ離脱時に監視をクリーンアップ

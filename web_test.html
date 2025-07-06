@@ -1079,7 +1079,7 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
                       successful_requests: job.progress?.successful_requests || results.filter(r => r.http_response?.status_code && r.http_response.status_code >= 200 && r.http_response.status_code < 400).length,
                       failed_requests: job.progress?.failed_requests || results.filter(r => r.http_response?.error || !r.http_response?.status_code).length,
                       results: results
-                    });
+                    }, jobId);
                   } catch (error) {
                     console.error('結果データの取得に失敗しました:', error);
                     resultsDiv.innerHTML = `
@@ -1132,8 +1132,8 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
         }
 
         // 実行結果をモーダルで表示
-        function showExecutionResults(result) {
-          console.log('showExecutionResults called with:', result); // デバッグ用
+        function showExecutionResults(result, jobId = null) {
+          console.log('showExecutionResults called with:', result, 'jobId:', jobId); // デバッグ用
           
           // 統計情報を更新
           document.getElementById('modal-total-executed').textContent = result.total_requests || 0;
@@ -1195,13 +1195,60 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
             });
             
             html += '</tbody></table></div>';
+            
+            // ジョブ詳細リンクを追加
+            if (jobId) {
+              html += `
+                <div class="mt-3 d-flex justify-content-between">
+                  <a href="/history-page" class="btn btn-secondary">
+                    <i class="bi bi-clock-history"></i> 履歴ページ
+                  </a>
+                  <a href="/history-page?job=${jobId}" class="btn btn-primary">
+                    <i class="bi bi-eye"></i> このジョブの詳細を確認
+                  </a>
+                </div>
+              `;
+            } else {
+              html += `
+                <div class="mt-3">
+                  <a href="/history-page" class="btn btn-primary">
+                    <i class="bi bi-clock-history"></i> 履歴ページで詳細を確認
+                  </a>
+                </div>
+              `;
+            }
+            
             resultsDiv.innerHTML = html;
           } else {
-            resultsDiv.innerHTML = `
+            let noResultsHtml = `
               <div class="alert alert-info">
                 <i class="bi bi-info-circle"></i> 実行結果がありません。
               </div>
             `;
+            
+            // ジョブ詳細リンクを追加
+            if (jobId) {
+              noResultsHtml += `
+                <div class="mt-3 d-flex justify-content-between">
+                  <a href="/history-page" class="btn btn-secondary">
+                    <i class="bi bi-clock-history"></i> 履歴ページ
+                  </a>
+                  <a href="/history-page?job=${jobId}" class="btn btn-primary">
+                    <i class="bi bi-eye"></i> このジョブの詳細を確認
+                  </a>
+                </div>
+              `;
+            } else {
+              noResultsHtml += `
+                <div class="mt-3">
+                  <a href="/history-page" class="btn btn-primary">
+                    <i class="bi bi-clock-history"></i> 履歴ページで詳細を確認
+                  </a>
+                </div>
+              `;
+            }
+            
+            resultsDiv.innerHTML = noResultsHtml;
           }
         }
 
@@ -1245,8 +1292,8 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
           }
         }
 
-    function displayJobResult(result) {
-      console.log('displayJobResult called with:', result); // デバッグ用
+    function displayJobResult(result, jobId = null) {
+      console.log('displayJobResult called with:', result, 'jobId:', jobId); // デバッグ用
       const resultDiv = document.getElementById('result');
       
       let html = `
@@ -1330,12 +1377,29 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`;
             </tbody>
           </table>
         </div>
-        <div class="mt-3">
-          <a href="/history-page" class="btn btn-primary">
-            <i class="bi bi-clock-history"></i> 履歴ページで詳細を確認
-          </a>
-        </div>
       `;
+      
+      // ジョブ詳細リンクを追加
+      if (jobId) {
+        html += `
+          <div class="mt-3 d-flex justify-content-between">
+            <a href="/history-page" class="btn btn-secondary">
+              <i class="bi bi-clock-history"></i> 履歴ページ
+            </a>
+            <a href="/history-page?job=${jobId}" class="btn btn-primary">
+              <i class="bi bi-eye"></i> このジョブの詳細を確認
+            </a>
+          </div>
+        `;
+      } else {
+        html += `
+          <div class="mt-3">
+            <a href="/history-page" class="btn btn-primary">
+              <i class="bi bi-clock-history"></i> 履歴ページで詳細を確認
+            </a>
+          </div>
+        `;
+      }
 
       resultDiv.innerHTML = html;
     }
