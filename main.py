@@ -36,6 +36,19 @@ from job_manager import job_manager
 # 認証関連のインポート
 from auth import auth_manager, get_current_user, get_current_active_user
 
+# 脆弱性分析関連のインポート
+from vulnerability_analysis import (
+    error_pattern_analyzer, 
+    payload_reflection_analyzer, 
+    time_delay_analyzer,
+    ErrorPatternConfigModel,
+    PayloadReflectionConfigModel,
+    TimeDelayConfigModel,
+    ErrorPatternAnalysisResult,
+    PayloadReflectionAnalysisResult,
+    TimeDelayAnalysisResult
+)
+
 app = FastAPI(
     title="プレースホルダ置換API",
     description="Burp Suite Intruderの4つの攻撃戦略を実装したAPI",
@@ -1472,123 +1485,550 @@ async def delete_job(job_id: str):
 @app.post("/api/jobs/cleanup")
 async def cleanup_jobs(max_age_hours: int = 24):
     """
-    古いジョブを削除するエンドポイント
+    古いジョブをクリーンアップ
     
     Args:
-        max_age_hours (int): 最大保持時間（時間）
+        max_age_hours (int): クリーンアップする最大時間（時間）
         
     Returns:
         Dict[str, Any]: クリーンアップ結果
     """
-    deleted_count = job_manager.cleanup_old_jobs(max_age_hours)
-    return {
-        "message": f"{deleted_count} 個の古いジョブを削除しました",
-        "deleted_count": deleted_count,
-        "max_age_hours": max_age_hours
-    }
+    try:
+        cleaned_count = job_manager.cleanup_old_jobs(max_age_hours)
+        return {
+            "message": f"{cleaned_count}個の古いジョブをクリーンアップしました",
+            "cleaned_jobs": cleaned_count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"クリーンアップエラー: {str(e)}")
 
-# 認証エンドポイント
-@app.post("/api/auth/register", response_model=UserResponse)
-async def register_user(request: UserRegisterRequest, db: Session = Depends(get_db)):
+# 古い統合分析APIは削除済み - 新しい3つの専用APIに置き換えられました
+
+# 認証関連のPydanticモデル
+class UserRegisterRequest(BaseModel):
     """
-    ユーザー登録
+    ユーザー登録リクエストの定義
+    
+    Attributes:
+        username (str): ユーザー名
+        email (str): メールアドレス
+        password (str): パスワード
+    """
+    username: str
+    email: str
+    password: str
+
+class UserLoginRequest(BaseModel):
+    """
+    ユーザーログインリクエストの定義
+    
+    Attributes:
+        username (str): ユーザー名
+        password (str): パスワード
+    """
+    username: str
+    password: str
+
+class UserResponse(BaseModel):
+    """
+    ユーザー情報レスポンスの定義
+    
+    Attributes:
+        id (int): ユーザーID
+        username (str): ユーザー名
+        email (str): メールアドレス
+        is_active (bool): アクティブフラグ
+        created_at (str): 作成日時
+        updated_at (str): 更新日時
+    """
+    id: int
+    username: str
+    email: str
+    is_active: bool
+    created_at: str
+    updated_at: str
+
+class Token(BaseModel):
+    """
+    トークンレスポンスの定義
+    
+    Attributes:
+        access_token (str): アクセストークン
+        token_type (str): トークンタイプ
+        user (UserResponse): ユーザー情報
+    """
+    access_token: str
+    token_type: str
+    user: UserResponse
+
+class TokenData(BaseModel):
+    """
+    トークンデータの定義
+    
+    Attributes:
+        user_id (Optional[int]): ユーザーID
+    """
+    user_id: Optional[int] = None
+
+class FuzzerEngine:
+    def __init__(self):
+        pass
+    
+    def sniper_attack(self, template: str, placeholders: List[str], payload_sets: List[PayloadSet]) -> List[Dict[str, str]]:
+        """
+        Sniper攻撃: 各ペイロードを各位置に順番に配置
+        
+        Sniper攻撃では固定のプレースホルダ <<>> を使用し、同じプレースホルダが
+        複数ある場合に、各出現位置を順番にペイロードで置換します。
+        置換されなかったプレースホルダは空文字列で置換されます。
+        
+        Args:
+            template (str): プレースホルダを含むテンプレート文字列
+            placeholders (List[str]): 使用されない（Sniper攻撃では固定プレースホルダを使用）
+            payload_sets (List[PayloadSet]): ペイロードセットのリスト（最初のセットのみ使用）
+            
+        Returns:
+            List[Dict[str, str]]: 生成されたリクエストのリスト
+            
+        Raises:
+            ValueError: ペイロードセットが提供されていない場合
+        """
+        if not payload_sets:
+            raise ValueError("少なくとも1つのペイロードセットが必要です")
+        
+        payload_set = payload_sets[0]
+        requests = []
+        
+        # オリジナルのテンプレート（プレースホルダを空文字列で置換）を最初に追加
+        original_template = template.replace("<<>>", "")
+        requests.append({
+            "request": original_template,
+            "placeholder": "original",
+            "payload": "",
+            "position": 0
+        })
+        
+        # Sniper攻撃では固定のプレースホルダ <<>> を使用
+        placeholder_pattern = "<<>>"
+        placeholder_count = template.count(placeholder_pattern)
+        
+        for payload in payload_set.payloads:
+            for position in range(placeholder_count):
+                result = template
+                # 指定された位置のプレースホルダのみを置換
+                current_pos = 0
+                start = 0
+                while current_pos <= position:
+                    pos = result.find(placeholder_pattern, start)
+                    if pos == -1:
+                        break
+                    if current_pos == position:
+                        # この位置のプレースホルダを置換
+                        result = result[:pos] + payload + result[pos + len(placeholder_pattern):]
+                        break
+                    start = pos + 1
+                    current_pos += 1
+                
+                # 置換されていないプレースホルダを空文字列で置換
+                result = result.replace(placeholder_pattern, "")
+                
+                requests.append({
+                    "request": result,
+                    "placeholder": "<<>>",
+                    "payload": payload,
+                    "position": position + 1
+                })
+        
+        return requests
+    
+    def battering_ram_attack(self, template: str, placeholders: List[str], payload_sets: List[PayloadSet]) -> List[Dict[str, str]]:
+        """
+        Battering Ram攻撃: 同じペイロードを全ての位置に同時に配置
+        
+        Battering Ram攻撃では、1つのペイロードセットの各ペイロードを
+        全てのプレースホルダに同時に配置します。
+        
+        Args:
+            template (str): プレースホルダを含むテンプレート文字列
+            placeholders (List[str]): プレースホルダ名のリスト
+            payload_sets (List[PayloadSet]): ペイロードセットのリスト（最初のセットのみ使用）
+            
+        Returns:
+            List[Dict[str, str]]: 生成されたリクエストのリスト
+            
+        Raises:
+            ValueError: ペイロードセットが提供されていない場合
+        """
+        if not payload_sets:
+            raise ValueError("少なくとも1つのペイロードセットが必要です")
+        
+        payload_set = payload_sets[0]
+        requests = []
+        
+        # オリジナルのテンプレート（プレースホルダを空文字列で置換）を最初に追加
+        original_template = template
+        for placeholder in placeholders:
+            original_template = original_template.replace(f"<<{placeholder}>>", "")
+        requests.append({
+            "request": original_template,
+            "placeholder": "original",
+            "payload": "",
+            "applied_to": []
+        })
+        
+        for payload in payload_set.payloads:
+            result = template
+            for placeholder in placeholders:
+                result = result.replace(f"<<{placeholder}>>", payload)
+            requests.append({
+                "request": result,
+                "payload": payload,
+                "applied_to": placeholders
+            })
+        
+        return requests
+    
+    def pitchfork_attack(self, template: str, placeholders: List[str], payload_sets: List[PayloadSet]) -> List[Dict[str, str]]:
+        """
+        Pitchfork攻撃: 各位置に異なるペイロードセットを使用し、同時に配置
+        
+        Pitchfork攻撃では、各プレースホルダに対応するペイロードセットがあり、
+        各セットの同じインデックスのペイロードを同時に配置します。
+        最小のペイロードセットのサイズまで処理します。
+        
+        Args:
+            template (str): プレースホルダを含むテンプレート文字列
+            placeholders (List[str]): プレースホルダ名のリスト
+            payload_sets (List[PayloadSet]): ペイロードセットのリスト
+            
+        Returns:
+            List[Dict[str, str]]: 生成されたリクエストのリスト
+            
+        Raises:
+            ValueError: ペイロードセットの数がプレースホルダの数と一致しない場合
+        """
+        if len(payload_sets) != len(placeholders):
+            raise ValueError("ペイロードセットの数はプレースホルダの数と一致する必要があります")
+        
+        requests = []
+        
+        # オリジナルのテンプレート（プレースホルダを空文字列で置換）を最初に追加
+        original_template = template
+        for placeholder in placeholders:
+            original_template = original_template.replace(f"<<{placeholder}>>", "")
+        requests.append({
+            "request": original_template,
+            "placeholder": "original",
+            "payloads": {}
+        })
+        
+        # 最小のペイロードセットのサイズを取得
+        min_payload_count = min(len(ps.payloads) for ps in payload_sets)
+        
+        for i in range(min_payload_count):
+            result = template
+            placeholder_payload_map = {}
+            
+            for j, (placeholder, payload_set) in enumerate(zip(placeholders, payload_sets)):
+                payload = payload_set.payloads[i]
+                result = result.replace(f"<<{placeholder}>>", payload)
+                placeholder_payload_map[placeholder] = payload
+            
+            requests.append({
+                "request": result,
+                "payloads": placeholder_payload_map
+            })
+        
+        return requests
+    
+    def cluster_bomb_attack(self, template: str, placeholders: List[str], payload_sets: List[PayloadSet]) -> List[Dict[str, str]]:
+        """
+        Cluster Bomb攻撃: 全てのペイロードの組み合わせをテスト
+        
+        Cluster Bomb攻撃では、各プレースホルダに対応するペイロードセットがあり、
+        全てのペイロードの組み合わせをテストします。
+        
+        Args:
+            template (str): プレースホルダを含むテンプレート文字列
+            placeholders (List[str]): プレースホルダ名のリスト
+            payload_sets (List[PayloadSet]): ペイロードセットのリスト
+            
+        Returns:
+            List[Dict[str, str]]: 生成されたリクエストのリスト
+            
+        Raises:
+            ValueError: ペイロードセットの数がプレースホルダの数と一致しない場合
+        """
+        if len(payload_sets) != len(placeholders):
+            raise ValueError("ペイロードセットの数はプレースホルダの数と一致する必要があります")
+        
+        requests = []
+        
+        # オリジナルのテンプレート（プレースホルダを空文字列で置換）を最初に追加
+        original_template = template
+        for placeholder in placeholders:
+            original_template = original_template.replace(f"<<{placeholder}>>", "")
+        requests.append({
+            "request": original_template,
+            "placeholder": "original",
+            "payloads": {}
+        })
+        
+        # 全てのペイロードの組み合わせを生成
+        payload_combinations = list(itertools.product(*[ps.payloads for ps in payload_sets]))
+        
+        for combination in payload_combinations:
+            result = template
+            placeholder_payload_map = {}
+            
+            for placeholder, payload in zip(placeholders, combination):
+                result = result.replace(f"<<{placeholder}>>", payload)
+                placeholder_payload_map[placeholder] = payload
+            
+            requests.append({
+                "request": result,
+                "payloads": placeholder_payload_map
+            })
+        
+        return requests
+
+    def mutation_attack(self, template: str, mutations: List[Mutation]) -> List[Dict[str, Any]]:
+        """
+        変異ベース攻撃: 各トークンに対して指定された変異を適用
+        
+        変異ベース攻撃では、各トークンに対して辞書的な値やrepeat機能付きの値を
+        適用してリクエストを生成します。
+        
+        Args:
+            template (str): プレースホルダを含むテンプレート文字列
+            mutations (List[Mutation]): 変異のリスト
+            
+        Returns:
+            List[Dict[str, Any]]: 生成されたリクエストのリスト
+        """
+        requests = []
+        
+        # オリジナルのテンプレート（全てのトークンを空文字列で置換）を最初に追加
+        original_template = template
+        for mutation in mutations:
+            original_template = original_template.replace(mutation.token, "")
+        requests.append({
+            "request": original_template,
+            "placeholder": "original",
+            "payload": "",
+            "position": 0
+        })
+        
+        # 各変異に対して処理
+        for mutation in mutations:
+            # 変異値を処理してペイロードリストを生成
+            payloads = process_mutation_values(mutation.values)
+            
+            # 各ペイロードに対してリクエストを生成
+            for i, payload in enumerate(payloads):
+                result = template.replace(mutation.token, payload)
+                requests.append({
+                    "request": result,
+                    "placeholder": mutation.token,
+                    "payload": payload,
+                    "position": i + 1,
+                    "strategy": mutation.strategy
+                })
+        
+        return requests
+
+fuzzer = FuzzerEngine()
+
+async def execute_single_request_async(request_data: Dict[str, Any], http_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    単一リクエストを非同期で実行するヘルパー関数
     
     Args:
-        request (UserRegisterRequest): ユーザー登録リクエスト
-        db (Session): データベースセッション
-    
+        request_data (Dict[str, Any]): リクエストデータ
+        http_config (Optional[Dict[str, Any]]): HTTP設定
+        
     Returns:
-        UserResponse: 登録されたユーザー情報
+        Dict[str, Any]: 実行結果
     """
     try:
-        # ユーザーを作成
-        user = auth_manager.create_user(
+        # HTTP設定を適用
+        config = HTTPRequestConfig()
+        if http_config:
+            config.timeout = http_config.get('timeout', 30)
+            config.follow_redirects = http_config.get('follow_redirects', True)
+            config.verify_ssl = http_config.get('verify_ssl', False)
+            config.scheme = http_config.get('scheme', 'http')
+            config.base_url = http_config.get('base_url', 'localhost:8000')
+            config.additional_headers = http_config.get('additional_headers')
+        
+        # リクエスト実行
+        executor = RequestExecutor(config)
+        result = await executor.execute_request(request_data['request'])
+        
+        return {
+            'request': request_data,
+            'http_response': result,
+            'success': True
+        }
+    except Exception as e:
+        return {
+            'request': request_data,
+            'error': str(e),
+            'success': False
+        }
+
+@app.post("/api/replace-placeholders", response_model=PlaceholderResponse)
+async def replace_placeholders(request: PlaceholderRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    """
+    プレースホルダ置換APIエンドポイント
+    
+    指定された攻撃戦略に基づいてプレースホルダをペイロードで置換し、
+    生成されたリクエストのリストを返します。また、リクエストと生成された
+    リクエストをデータベースに永続化します。
+    
+    Args:
+        request (PlaceholderRequest): 置換リクエスト
+        db (Session): データベースセッション
+        
+    Returns:
+        PlaceholderResponse: 攻撃戦略名、総リクエスト数、リクエストリスト、リクエストIDを含むレスポンス
+        
+    Raises:
+        HTTPException: 無効な攻撃戦略が指定された場合
+    """
+    try:
+        # 攻撃戦略に基づいて適切なメソッドを呼び出し
+        if request.strategy == AttackStrategy.SNIPER:
+            requests = fuzzer.sniper_attack(request.template, request.placeholders, request.payload_sets)
+        elif request.strategy == AttackStrategy.BATTERING_RAM:
+            requests = fuzzer.battering_ram_attack(request.template, request.placeholders, request.payload_sets)
+        elif request.strategy == AttackStrategy.PITCHFORK:
+            requests = fuzzer.pitchfork_attack(request.template, request.placeholders, request.payload_sets)
+        elif request.strategy == AttackStrategy.CLUSTER_BOMB:
+            requests = fuzzer.cluster_bomb_attack(request.template, request.placeholders, request.payload_sets)
+        else:
+            raise HTTPException(status_code=400, detail=f"無効な攻撃戦略: {request.strategy}")
+        
+        # ペイロードセットを辞書形式に変換
+        payload_sets_dict = [{"name": ps.name, "payloads": ps.payloads} for ps in request.payload_sets]
+        
+        # データベースに保存
+        fuzzer_request = db_manager.save_fuzzer_request(
             db=db,
-            username=request.username,
-            email=request.email,
-            password=request.password
+            template=request.template,
+            placeholders=request.placeholders,
+            strategy=request.strategy.value,
+            payload_sets=payload_sets_dict,
+            generated_requests=requests
         )
         
-        return UserResponse(
-            id=user.id,
-            username=user.username,
-            email=user.email,
-            is_active=user.is_active,
-            created_at=user.created_at.isoformat() if user.created_at else "",
-            updated_at=user.updated_at.isoformat() if user.updated_at else ""
+        return PlaceholderResponse(
+            strategy=request.strategy.value,
+            total_requests=len(requests),
+            requests=requests,
+            request_id=fuzzer_request.id
         )
-        
-    except HTTPException:
-        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"ユーザー登録エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"内部エラー: {str(e)}")
 
-@app.post("/api/auth/login", response_model=Token)
-async def login_user(request: UserLoginRequest, db: Session = Depends(get_db)):
+@app.post("/api/mutations", response_model=PlaceholderResponse)
+async def apply_mutations(request: MutationRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """
-    ユーザーログイン
+    変異ベースのプレースホルダ置換を実行
+    
+    各トークンに対して指定された変異（辞書的な値やrepeat機能付きの値）を適用して
+    リクエストを生成します。
     
     Args:
-        request (UserLoginRequest): ログインリクエスト
+        request (MutationRequest): 変異リクエスト
         db (Session): データベースセッション
-    
+        
     Returns:
-        Token: アクセストークンとユーザー情報
+        PlaceholderResponse: 生成されたリクエストの情報
     """
     try:
-        # ユーザーを認証
-        user = auth_manager.authenticate_user(db, request.username, request.password)
-        if not user:
-            raise HTTPException(
-                status_code=401,
-                detail="ユーザー名またはパスワードが間違っています"
+        # 変異ベース攻撃を実行
+        requests = fuzzer.mutation_attack(request.template, request.mutations)
+        
+        # データベースに保存
+        fuzzer_request = FuzzerRequest(
+            template=request.template,
+            strategy="mutation",
+            total_requests=len(requests)
+        )
+        fuzzer_request.set_placeholders([mutation.token for mutation in request.mutations])
+        fuzzer_request.set_payload_sets([])  # mutationsではpayload_setsは使用しない
+        db.add(fuzzer_request)
+        db.commit()
+        db.refresh(fuzzer_request)
+        
+        # 生成されたリクエストをデータベースに保存
+        for i, req in enumerate(requests):
+            generated_request = GeneratedRequest(
+                fuzzer_request_id=fuzzer_request.id,
+                request_number=i + 1,
+                request_content=req["request"],
+                placeholder=req.get("placeholder", ""),
+                payload=req.get("payload", ""),
+                position=req.get("position", 0)
             )
+            db.add(generated_request)
+        db.commit()
         
-        if not user.is_active:
-            raise HTTPException(status_code=400, detail="非アクティブなユーザーです")
-        
-        # アクセストークンを作成
-        access_token = auth_manager.create_access_token(data={"sub": str(user.id)})
-        
-        user_response = UserResponse(
-            id=user.id,
-            username=user.username,
-            email=user.email,
-            is_active=user.is_active,
-            created_at=user.created_at.isoformat() if user.created_at else "",
-            updated_at=user.updated_at.isoformat() if user.updated_at else ""
+        return PlaceholderResponse(
+            strategy="mutation",
+            total_requests=len(requests),
+            requests=requests,
+            request_id=fuzzer_request.id
         )
         
-        return Token(
-            access_token=access_token,
-            token_type="bearer",
-            user=user_response
-        )
-        
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"ログインエラー: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
 
-@app.get("/api/auth/me", response_model=UserResponse)
-async def get_current_user_info(current_user: User = Depends(get_current_active_user)):
+@app.post("/api/intuitive", response_model=PlaceholderResponse)
+async def intuitive_replace_placeholders(request: IntuitiveRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """
-    現在のユーザー情報を取得
+    直感的なプレースホルダ置換API
     
-    Args:
-        current_user (User): 現在のユーザー
-    
-    Returns:
-        UserResponse: ユーザー情報
+    placeholdersを使わずに、payload_setsのtokenから自動的にプレースホルダを抽出します。
     """
-    return UserResponse(
-        id=current_user.id,
-        username=current_user.username,
-        email=current_user.email,
-        is_active=current_user.is_active,
-        created_at=current_user.created_at.isoformat() if current_user.created_at else "",
-        updated_at=current_user.updated_at.isoformat() if current_user.updated_at else ""
-    )
+    try:
+        # payload_setsからプレースホルダを自動抽出（<<>>を除去）
+        placeholders = []
+        for payload_set in request.payload_sets:
+            # <<username>> -> username に変換
+            placeholder_name = payload_set.token.strip("<>")
+            placeholders.append(placeholder_name)
+        
+        # payload_setsを従来の形式に変換
+        converted_payload_sets = []
+        for payload_set in request.payload_sets:
+            # valuesを処理してペイロードリストを生成
+            processed_payloads = process_mutation_values(payload_set.values)
+            
+            # プレースホルダ名をnameとして使用
+            placeholder_name = payload_set.token.strip("<>")
+            converted_payload_sets.append(PayloadSet(
+                name=placeholder_name,
+                payloads=processed_payloads
+            ))
+        
+        # 従来のリクエスト形式に変換
+        placeholder_request = PlaceholderRequest(
+            template=request.template,
+            placeholders=placeholders,
+            strategy=request.strategy,
+            payload_sets=converted_payload_sets
+        )
+        
+        # 既存の処理を再利用
+        return await replace_placeholders(placeholder_request, db)
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"リクエストの処理に失敗しました: {str(e)}")
 
 @app.get("/test", response_class=HTMLResponse)
 async def test_page():
@@ -1763,6 +2203,351 @@ async def get_job_result_detail(job_id: str, result_id: int, db: Session = Depen
     except Exception as e:
         print(f"結果詳細取得エラー: {e}")
         raise HTTPException(status_code=500, detail=f"結果詳細取得エラー: {str(e)}")
+
+# 古いVulnerabilityAnalyzerクラスは削除済み - vulnerability_analysis.pyの個別分析エンジンで置き換えられました
+# class VulnerabilityAnalyzer:
+
+# 認証関連エンドポイント
+@app.post("/api/auth/register", response_model=UserResponse)
+async def register_user(request: UserRegisterRequest, db: Session = Depends(get_db)):
+    """
+    新しいユーザーを登録するエンドポイント
+    
+    Args:
+        request: ユーザー登録リクエスト
+        db: データベースセッション
+        
+    Returns:
+        UserResponse: 作成されたユーザー情報
+        
+    Raises:
+        HTTPException: ユーザー名またはメールが既に存在する場合
+    """
+    # ユーザー名の重複チェック
+    existing_user = auth_manager.get_user_by_username(db, request.username)
+    if existing_user:
+        raise HTTPException(status_code=400, detail="このユーザー名は既に使用されています")
+    
+    # メールアドレスの重複チェック
+    existing_email = auth_manager.get_user_by_email(db, request.email)
+    if existing_email:
+        raise HTTPException(status_code=400, detail="このメールアドレスは既に使用されています")
+    
+    # ユーザー作成
+    user = auth_manager.create_user(
+        db=db,
+        username=request.username,
+        email=request.email,
+        password=request.password
+    )
+    
+    return UserResponse(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        is_active=user.is_active,
+        created_at=user.created_at.isoformat() if user.created_at else "",
+        updated_at=user.updated_at.isoformat() if user.updated_at else ""
+    )
+
+@app.post("/api/auth/login", response_model=Token)
+async def login_user(request: UserLoginRequest, db: Session = Depends(get_db)):
+    """
+    ユーザーログインエンドポイント
+    
+    Args:
+        request: ログインリクエスト
+        db: データベースセッション
+        
+    Returns:
+        Token: JWTトークンとユーザー情報
+        
+    Raises:
+        HTTPException: 認証に失敗した場合
+    """
+    # ユーザー認証
+    user = auth_manager.authenticate_user(db, request.username, request.password)
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="ユーザー名またはパスワードが正しくありません",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    if not user.is_active:
+        raise HTTPException(status_code=400, detail="アカウントが無効です")
+    
+    # JWTトークン作成
+    access_token = auth_manager.create_access_token(data={"sub": str(user.id)})
+    
+    user_response = UserResponse(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        is_active=user.is_active,
+        created_at=user.created_at.isoformat() if user.created_at else "",
+        updated_at=user.updated_at.isoformat() if user.updated_at else ""
+    )
+    
+    return Token(
+        access_token=access_token,
+        token_type="bearer",
+        user=user_response
+    )
+
+@app.get("/api/auth/me", response_model=UserResponse)
+async def get_current_user_info(current_user: User = Depends(get_current_active_user)):
+    """
+    現在のユーザー情報を取得するエンドポイント
+    
+    Args:
+        current_user: 現在のユーザー（JWT認証）
+        
+    Returns:
+        UserResponse: ユーザー情報
+    """
+    return UserResponse(
+        id=current_user.id,
+        username=current_user.username,
+        email=current_user.email,
+        is_active=current_user.is_active,
+        created_at=current_user.created_at.isoformat() if current_user.created_at else "",
+        updated_at=current_user.updated_at.isoformat() if current_user.updated_at else ""
+    )
+
+# エラーパターン検出用モデル - vulnerability_analysis.pyに移動済み
+# class ErrorPatternConfigModel(BaseModel):
+
+# class ErrorPatternFinding(BaseModel):
+
+# class ErrorPatternAnalysisResult(BaseModel):
+
+# ペイロード反射検出用モデル - vulnerability_analysis.pyに移動済み
+# class PayloadReflectionConfigModel(BaseModel):
+
+# class PayloadReflectionFinding(BaseModel):
+
+# class PayloadReflectionAnalysisResult(BaseModel):
+
+# 時間遅延検出用モデル - vulnerability_analysis.pyに移動済み
+# class TimeDelayConfigModel(BaseModel):
+
+# class TimeDelayFinding(BaseModel):
+
+# class TimeDelayAnalysisResult(BaseModel):
+
+# 3つの専用脆弱性分析APIエンドポイント
+
+@app.post("/api/jobs/{job_id}/analyze/error-patterns", response_model=ErrorPatternAnalysisResult)
+async def analyze_error_patterns(job_id: str, 
+                                config: Optional[ErrorPatternConfigModel] = None,
+                                db: Session = Depends(get_db),
+                                current_user: User = Depends(get_current_active_user)):
+    """
+    エラーパターン検出分析
+    
+    Args:
+        job_id (str): 分析対象のジョブID
+        config: エラーパターン検出設定
+        db: データベースセッション
+        current_user: 現在のユーザー
+        
+    Returns:
+        ErrorPatternAnalysisResult: エラーパターン分析結果
+    """
+    # ジョブの存在確認
+    job = job_manager.get_job(job_id)
+    if not job:
+        db_job = db_manager.get_job_by_id(db, job_id)
+        if not db_job:
+            raise HTTPException(status_code=404, detail="ジョブが見つかりません")
+    
+    try:
+        # エラーパターン分析を実行
+        if config:
+            result = error_pattern_analyzer.analyze_job_errors(
+                job_id, db, config.error_patterns, config.case_sensitive
+            )
+        else:
+            result = error_pattern_analyzer.analyze_job_errors(job_id, db)
+        
+        return result
+        
+    except Exception as e:
+        print(f"エラーパターン分析エラー: {e}")
+        raise HTTPException(status_code=500, detail=f"分析エラー: {str(e)}")
+
+@app.get("/api/jobs/{job_id}/analyze/error-patterns", response_model=ErrorPatternAnalysisResult)
+async def analyze_error_patterns_get(job_id: str,
+                                   error_patterns: Optional[str] = None,
+                                   case_sensitive: bool = False,
+                                   db: Session = Depends(get_db),
+                                   current_user: User = Depends(get_current_active_user)):
+    """
+    エラーパターン検出分析（GETバージョン）
+    
+    Args:
+        job_id (str): 分析対象のジョブID
+        error_patterns: カンマ区切りのエラーパターン
+        case_sensitive: 大文字小文字を区別するかどうか
+        db: データベースセッション
+        current_user: 現在のユーザー
+        
+    Returns:
+        ErrorPatternAnalysisResult: エラーパターン分析結果
+    """
+    config = ErrorPatternConfigModel(
+        error_patterns=error_patterns.split(',') if error_patterns else None,
+        case_sensitive=case_sensitive
+    )
+    
+    return await analyze_error_patterns(job_id, config, db, current_user)
+
+@app.post("/api/jobs/{job_id}/analyze/payload-reflection", response_model=PayloadReflectionAnalysisResult)
+async def analyze_payload_reflection(job_id: str,
+                                   config: Optional[PayloadReflectionConfigModel] = None,
+                                   db: Session = Depends(get_db),
+                                   current_user: User = Depends(get_current_active_user)):
+    """
+    ペイロード反射検出分析
+    
+    Args:
+        job_id (str): 分析対象のジョブID
+        config: ペイロード反射検出設定
+        db: データベースセッション
+        current_user: 現在のユーザー
+        
+    Returns:
+        PayloadReflectionAnalysisResult: ペイロード反射分析結果
+    """
+    # ジョブの存在確認
+    job = job_manager.get_job(job_id)
+    if not job:
+        db_job = db_manager.get_job_by_id(db, job_id)
+        if not db_job:
+            raise HTTPException(status_code=404, detail="ジョブが見つかりません")
+    
+    try:
+        # ペイロード反射分析を実行
+        if config:
+            result = payload_reflection_analyzer.analyze_job_reflections(
+                job_id, db, 
+                config.check_html_encoding,
+                config.check_url_encoding,
+                config.check_js_encoding,
+                config.minimum_payload_length
+            )
+        else:
+            result = payload_reflection_analyzer.analyze_job_reflections(job_id, db)
+        
+        return result
+        
+    except Exception as e:
+        print(f"ペイロード反射分析エラー: {e}")
+        raise HTTPException(status_code=500, detail=f"分析エラー: {str(e)}")
+
+@app.get("/api/jobs/{job_id}/analyze/payload-reflection", response_model=PayloadReflectionAnalysisResult)
+async def analyze_payload_reflection_get(job_id: str,
+                                       check_html_encoding: bool = True,
+                                       check_url_encoding: bool = True,
+                                       check_js_encoding: bool = True,
+                                       minimum_payload_length: int = 3,
+                                       db: Session = Depends(get_db),
+                                       current_user: User = Depends(get_current_active_user)):
+    """
+    ペイロード反射検出分析（GETバージョン）
+    
+    Args:
+        job_id (str): 分析対象のジョブID
+        check_html_encoding: HTMLエンコーディングをチェックするかどうか
+        check_url_encoding: URLエンコーディングをチェックするかどうか
+        check_js_encoding: JavaScriptエンコーディングをチェックするかどうか
+        minimum_payload_length: 検出対象とする最小ペイロード長
+        db: データベースセッション
+        current_user: 現在のユーザー
+        
+    Returns:
+        PayloadReflectionAnalysisResult: ペイロード反射分析結果
+    """
+    config = PayloadReflectionConfigModel(
+        check_html_encoding=check_html_encoding,
+        check_url_encoding=check_url_encoding,
+        check_js_encoding=check_js_encoding,
+        minimum_payload_length=minimum_payload_length
+    )
+    
+    return await analyze_payload_reflection(job_id, config, db, current_user)
+
+@app.post("/api/jobs/{job_id}/analyze/time-delay", response_model=TimeDelayAnalysisResult)
+async def analyze_time_delay(job_id: str,
+                           config: Optional[TimeDelayConfigModel] = None,
+                           db: Session = Depends(get_db),
+                           current_user: User = Depends(get_current_active_user)):
+    """
+    時間遅延検出分析
+    
+    Args:
+        job_id (str): 分析対象のジョブID
+        config: 時間遅延検出設定
+        db: データベースセッション
+        current_user: 現在のユーザー
+        
+    Returns:
+        TimeDelayAnalysisResult: 時間遅延分析結果
+    """
+    # ジョブの存在確認
+    job = job_manager.get_job(job_id)
+    if not job:
+        db_job = db_manager.get_job_by_id(db, job_id)
+        if not db_job:
+            raise HTTPException(status_code=404, detail="ジョブが見つかりません")
+    
+    try:
+        # 時間遅延分析を実行
+        if config:
+            result = time_delay_analyzer.analyze_job_time_delays(
+                job_id, db,
+                config.time_threshold,
+                config.baseline_method,
+                config.consider_payload_type
+            )
+        else:
+            result = time_delay_analyzer.analyze_job_time_delays(job_id, db)
+        
+        return result
+        
+    except Exception as e:
+        print(f"時間遅延分析エラー: {e}")
+        raise HTTPException(status_code=500, detail=f"分析エラー: {str(e)}")
+
+@app.get("/api/jobs/{job_id}/analyze/time-delay", response_model=TimeDelayAnalysisResult)
+async def analyze_time_delay_get(job_id: str,
+                               time_threshold: float = 2.0,
+                               baseline_method: str = "first_request",
+                               consider_payload_type: bool = True,
+                               db: Session = Depends(get_db),
+                               current_user: User = Depends(get_current_active_user)):
+    """
+    時間遅延検出分析（GETバージョン）
+    
+    Args:
+        job_id (str): 分析対象のジョブID
+        time_threshold: 遅延として判定する閾値（秒）
+        baseline_method: ベースライン計算方法
+        consider_payload_type: ペイロードタイプを考慮するかどうか
+        db: データベースセッション
+        current_user: 現在のユーザー
+        
+    Returns:
+        TimeDelayAnalysisResult: 時間遅延分析結果
+    """
+    config = TimeDelayConfigModel(
+        time_threshold=time_threshold,
+        baseline_method=baseline_method,
+        consider_payload_type=consider_payload_type
+    )
+    
+    return await analyze_time_delay(job_id, config, db, current_user)
 
 if __name__ == "__main__":
     import os
