@@ -286,6 +286,26 @@
         .payload-cell[title] {
             cursor: help;
         }
+        
+        /* 脆弱性分析結果のリクエスト番号リンクスタイル */
+        .request-number-link {
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+        
+        .request-number-link:hover {
+            background-color: #f8f9fa;
+            text-decoration: underline;
+            transform: translateY(-1px);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        .request-number-link:active {
+            transform: translateY(0);
+        }
     </style>
 </head>
 <body>
@@ -1122,7 +1142,7 @@
                     }
                 };
 
-                const response = await fetch(endpoint, {
+                const response = await window.authManager.apiRequest(endpoint, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -1384,6 +1404,11 @@
         function showExecutionResults(result) {
             // デバッグ情報をコンソールに出力
             console.log('全実行結果:', result);
+            console.log('結果データ構造確認:', result.results);
+            if (result.results && result.results.length > 0) {
+                console.log('最初の結果データ:', result.results[0]);
+                console.log('http_responseデータ:', result.results[0].http_response);
+            }
             window.lastExecutionResult = result; // 後で使用するために保存
             
             // 統計情報を更新
@@ -1414,12 +1439,23 @@
                             </thead>
                             <tbody>
                                 ${result.results.map((req, index) => {
-                                    const httpResponse = req.http_response || {};
-                                    const isSuccess = !httpResponse.error;
+                                    console.log(`リクエスト ${index + 1} データ:`, req);
+                                    
+                                    // 実際のデータ構造に合わせてアクセス
+                                    const isSuccess = req.success === true && !req.error_message;
                                     const statusClass = isSuccess ? 'text-success' : 'text-danger';
                                     const statusText = isSuccess ? 
-                                        `HTTP ${httpResponse.status_code || 'N/A'}` : 
+                                        `HTTP ${req.status_code || 'N/A'}` : 
                                         'エラー';
+                                    
+                                    const elapsedTime = req.elapsed_time ? 
+                                        (req.elapsed_time / 1000).toFixed(3) + 's' : 'N/A';
+                                    const url = req.url || 'N/A';
+                                    const errorMsg = req.error_message || '-';
+                                    
+                                    console.log(`リクエスト ${index + 1} 表示データ:`, {
+                                        isSuccess, statusText, elapsedTime, url, errorMsg
+                                    });
                                     
                                     return `
                                         <tr>
@@ -1428,9 +1464,9 @@
                                                 <i class="fas fa-${isSuccess ? 'check' : 'times'}"></i>
                                                 ${statusText}
                                             </td>
-                                            <td>${httpResponse.elapsed_time ? httpResponse.elapsed_time.toFixed(3) + 's' : 'N/A'}</td>
-                                            <td>${httpResponse.url || 'N/A'}</td>
-                                            <td>${httpResponse.error || '-'}</td>
+                                            <td>${elapsedTime}</td>
+                                            <td>${url}</td>
+                                            <td>${errorMsg}</td>
                                             <td>
                                                 <button class="btn btn-sm btn-outline-secondary" onclick="showResponse(${index})">
                                                     レスポンス表示
@@ -1483,22 +1519,28 @@
             }
 
             const req = result.results[index];
-            const httpResponse = req.http_response || {};
 
             let responseContent = '';
-            if (httpResponse.error) {
-                responseContent = `<div class="alert alert-danger">${escapeHtml(httpResponse.error)}</div>`;
+            if (req.error_message) {
+                responseContent = `<div class="alert alert-danger">${escapeHtml(req.error_message)}</div>`;
             } else {
+                // レスポンス詳細を表示（APIレスポンスから詳細データを取得する必要がある場合）
                 responseContent = `
                     <div class="row">
-                        <div class="col-md-6">
-                            <h6>レスポンスヘッダー</h6>
-                            <pre class="bg-light p-2 rounded"><code>${escapeHtml(JSON.stringify(httpResponse.headers, null, 2))}</code></pre>
+                        <div class="col-md-12">
+                            <h6>リクエスト情報</h6>
+                            <table class="table table-sm">
+                                <tr><td>ステータスコード:</td><td>${req.status_code}</td></tr>
+                                <tr><td>レスポンス時間:</td><td>${req.elapsed_time ? (req.elapsed_time / 1000).toFixed(3) + 's' : 'N/A'}</td></tr>
+                                <tr><td>URL:</td><td>${req.url}</td></tr>
+                                <tr><td>ペイロード:</td><td>${escapeHtml(req.payload || '-')}</td></tr>
+                                <tr><td>プレースホルダ:</td><td>${req.placeholder}</td></tr>
+                            </table>
                         </div>
-                        <div class="col-md-6">
-                            <h6>レスポンスボディ</h6>
-                            <pre class="bg-light p-2 rounded" style="max-height: 300px; overflow-y: auto;"><code>${escapeHtml(httpResponse.body || '')}</code></pre>
-                        </div>
+                    </div>
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i> 
+                        詳細なレスポンスヘッダーとボディを表示するには、個別リクエスト詳細を参照してください。
                     </div>
                 `;
             }
@@ -2653,6 +2695,11 @@
                     content.appendChild(alertDiv);
                 }
                 
+                // 脆弱性分析セクション（完了したジョブのみ）
+                if (job.status === 'completed' && resultsData.total_results > 0) {
+                    addVulnerabilityAnalysisSection(content, jobIdFromResponse);
+                }
+                
                 const modal = new bootstrap.Modal(document.getElementById('jobDetailModal'));
                 modal.show();
             } catch (error) {
@@ -2890,6 +2937,475 @@
         window.addEventListener('beforeunload', function() {
             stopAllJobMonitoring();
         });
+
+        // 脆弱性分析機能
+        function addVulnerabilityAnalysisSection(content, jobId) {
+            // セクション区切り
+            const hrElement = document.createElement('hr');
+            hrElement.className = 'my-4';
+            content.appendChild(hrElement);
+            
+            // 脆弱性分析セクションのタイトル
+            const analysisTitle = document.createElement('h6');
+            analysisTitle.innerHTML = '<i class="fas fa-shield-alt"></i> 脆弱性分析';
+            content.appendChild(analysisTitle);
+            
+            // 分析設定カード
+            const analysisCard = document.createElement('div');
+            analysisCard.className = 'card mb-3';
+            
+            const cardHeader = document.createElement('div');
+            cardHeader.className = 'card-header';
+            cardHeader.innerHTML = '<h6 class="mb-0"><i class="fas fa-cogs"></i> 分析設定</h6>';
+            analysisCard.appendChild(cardHeader);
+            
+            const cardBody = document.createElement('div');
+            cardBody.className = 'card-body';
+            
+            // 分析タイプ選択
+            const analysisTypesRow = document.createElement('div');
+            analysisTypesRow.className = 'row mb-3';
+            
+            const analysisTypes = [
+                {
+                    id: 'error-patterns',
+                    label: 'エラーパターン検出',
+                    description: 'レスポンス内のエラーメッセージや機密情報を検出',
+                    checked: true
+                },
+                {
+                    id: 'payload-reflection', 
+                    label: 'ペイロード反射検出',
+                    description: '送信ペイロードがレスポンスに反射されているかを検出（XSS等）',
+                    checked: true
+                },
+                {
+                    id: 'time-delay',
+                    label: '時間遅延検出',
+                    description: 'レスポンス時間の異常遅延を検出（SQLインジェクション等）',
+                    checked: true
+                }
+            ];
+            
+            analysisTypes.forEach(type => {
+                const col = document.createElement('div');
+                col.className = 'col-md-4';
+                
+                const formCheck = document.createElement('div');
+                formCheck.className = 'form-check';
+                
+                const checkbox = document.createElement('input');
+                checkbox.className = 'form-check-input';
+                checkbox.type = 'checkbox';
+                checkbox.id = `analysis-${type.id}`;
+                checkbox.checked = type.checked;
+                
+                const label = document.createElement('label');
+                label.className = 'form-check-label';
+                label.setAttribute('for', checkbox.id);
+                label.innerHTML = `<strong>${type.label}</strong><br><small class="text-muted">${type.description}</small>`;
+                
+                formCheck.appendChild(checkbox);
+                formCheck.appendChild(label);
+                col.appendChild(formCheck);
+                analysisTypesRow.appendChild(col);
+            });
+            
+            cardBody.appendChild(analysisTypesRow);
+            
+            // 実行ボタン
+            const buttonRow = document.createElement('div');
+            buttonRow.className = 'row';
+            const buttonCol = document.createElement('div');
+            buttonCol.className = 'col-12 text-center';
+            
+            const executeBtn = document.createElement('button');
+            executeBtn.className = 'btn btn-primary';
+            executeBtn.innerHTML = '<i class="fas fa-play"></i> 脆弱性分析を実行';
+            executeBtn.onclick = () => executeVulnerabilityAnalysis(jobId);
+            
+            buttonCol.appendChild(executeBtn);
+            buttonRow.appendChild(buttonCol);
+            cardBody.appendChild(buttonRow);
+            
+            analysisCard.appendChild(cardBody);
+            content.appendChild(analysisCard);
+            
+            // 分析結果表示エリア
+            const resultsDiv = document.createElement('div');
+            resultsDiv.id = `analysis-results-${jobId}`;
+            resultsDiv.className = 'analysis-results';
+            content.appendChild(resultsDiv);
+        }
+
+        async function executeVulnerabilityAnalysis(jobId) {
+            const resultContainer = document.getElementById(`analysis-results-${jobId}`);
+            
+            // 選択された分析タイプを確認
+            const selectedAnalyses = [];
+            if (document.getElementById('analysis-error-patterns').checked) {
+                selectedAnalyses.push('error-patterns');
+            }
+            if (document.getElementById('analysis-payload-reflection').checked) {
+                selectedAnalyses.push('payload-reflection');
+            }
+            if (document.getElementById('analysis-time-delay').checked) {
+                selectedAnalyses.push('time-delay');
+            }
+            
+            if (selectedAnalyses.length === 0) {
+                alert('実行する分析を少なくとも1つ選択してください。');
+                return;
+            }
+            
+            // ローディング表示
+            resultContainer.innerHTML = `
+                <div class="card mt-3">
+                    <div class="card-body text-center">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">分析中...</span>
+                        </div>
+                        <p class="mt-2">脆弱性分析を実行中...</p>
+                    </div>
+                </div>
+            `;
+            
+            const results = {};
+            
+            try {
+                // 各分析を並行実行
+                const analysisPromises = selectedAnalyses.map(async (analysisType) => {
+                    try {
+                        const response = await window.authManager.apiRequest(`/api/jobs/${jobId}/analyze/${analysisType}`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({}) // デフォルト設定を使用
+                        });
+                        
+                        if (response.ok) {
+                            const result = await response.json();
+                            results[analysisType] = { success: true, data: result };
+                        } else {
+                            const error = await response.json();
+                            results[analysisType] = { success: false, error: error.detail || 'エラーが発生しました' };
+                        }
+                    } catch (error) {
+                        results[analysisType] = { success: false, error: error.message };
+                    }
+                });
+                
+                await Promise.all(analysisPromises);
+                
+                // 結果を表示
+                displayAnalysisResults(resultContainer, results, selectedAnalyses, jobId);
+                
+            } catch (error) {
+                console.error('脆弱性分析エラー:', error);
+                resultContainer.innerHTML = `
+                    <div class="card mt-3">
+                        <div class="card-body">
+                            <div class="alert alert-danger">
+                                <i class="fas fa-exclamation-triangle"></i> 
+                                脆弱性分析の実行中にエラーが発生しました: ${error.message}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        function displayAnalysisResults(container, results, selectedAnalyses, jobId) {
+            container.innerHTML = '';
+            
+            const resultsCard = document.createElement('div');
+            resultsCard.className = 'card mt-3';
+            
+            const cardHeader = document.createElement('div');
+            cardHeader.className = 'card-header';
+            cardHeader.innerHTML = '<h6 class="mb-0"><i class="fas fa-search"></i> 分析結果</h6>';
+            resultsCard.appendChild(cardHeader);
+            
+            const cardBody = document.createElement('div');
+            cardBody.className = 'card-body';
+            
+            // 各分析結果のタブを作成
+            const tabsNav = document.createElement('ul');
+            tabsNav.className = 'nav nav-tabs';
+            tabsNav.setAttribute('role', 'tablist');
+            
+            const tabsContent = document.createElement('div');
+            tabsContent.className = 'tab-content mt-3';
+            
+            const analysisTypeNames = {
+                'error-patterns': 'エラーパターン',
+                'payload-reflection': 'ペイロード反射',
+                'time-delay': '時間遅延'
+            };
+            
+            selectedAnalyses.forEach((analysisType, index) => {
+                const tabId = `analysis-tab-${analysisType}`;
+                const tabPaneId = `analysis-pane-${analysisType}`;
+                
+                // タブナビゲーション
+                const navItem = document.createElement('li');
+                navItem.className = 'nav-item';
+                
+                const navLink = document.createElement('button');
+                navLink.className = `nav-link ${index === 0 ? 'active' : ''}`;
+                navLink.setAttribute('data-bs-toggle', 'tab');
+                navLink.setAttribute('data-bs-target', `#${tabPaneId}`);
+                navLink.setAttribute('type', 'button');
+                navLink.setAttribute('role', 'tab');
+                navLink.id = tabId;
+                
+                const result = results[analysisType];
+                if (result.success) {
+                    const findingsCount = result.data.error_findings_count || 
+                                        result.data.reflection_findings_count || 
+                                        result.data.delay_findings_count || 0;
+                    navLink.innerHTML = `${analysisTypeNames[analysisType]} <span class="badge bg-${findingsCount > 0 ? 'danger' : 'success'} ms-1">${findingsCount}</span>`;
+                } else {
+                    navLink.innerHTML = `${analysisTypeNames[analysisType]} <span class="badge bg-secondary ms-1">エラー</span>`;
+                }
+                
+                navItem.appendChild(navLink);
+                tabsNav.appendChild(navItem);
+                
+                // タブコンテンツ
+                const tabPane = document.createElement('div');
+                tabPane.className = `tab-pane fade ${index === 0 ? 'show active' : ''}`;
+                tabPane.id = tabPaneId;
+                tabPane.setAttribute('role', 'tabpanel');
+                
+                if (result.success) {
+                    tabPane.appendChild(createAnalysisResultContent(analysisType, result.data, jobId));
+                } else {
+                    const errorAlert = document.createElement('div');
+                    errorAlert.className = 'alert alert-danger';
+                    errorAlert.innerHTML = `<i class="fas fa-exclamation-triangle"></i> ${result.error}`;
+                    tabPane.appendChild(errorAlert);
+                }
+                
+                tabsContent.appendChild(tabPane);
+            });
+            
+            cardBody.appendChild(tabsNav);
+            cardBody.appendChild(tabsContent);
+            resultsCard.appendChild(cardBody);
+            container.appendChild(resultsCard);
+        }
+
+        function createAnalysisResultContent(analysisType, data, jobId) {
+            const content = document.createElement('div');
+            
+            // サマリー情報
+            const summaryDiv = document.createElement('div');
+            summaryDiv.className = 'row mb-3';
+            
+            const summaryData = getSummaryData(analysisType, data);
+            summaryData.forEach(item => {
+                const col = document.createElement('div');
+                col.className = 'col-md-3';
+                
+                const statCard = document.createElement('div');
+                statCard.className = 'card bg-light';
+                
+                const statBody = document.createElement('div');
+                statBody.className = 'card-body text-center p-2';
+                
+                const statValue = document.createElement('h6');
+                statValue.className = `text-${item.color}`;
+                statValue.textContent = item.value;
+                
+                const statLabel = document.createElement('small');
+                statLabel.textContent = item.label;
+                
+                statBody.appendChild(statValue);
+                statBody.appendChild(statLabel);
+                statCard.appendChild(statBody);
+                col.appendChild(statCard);
+                summaryDiv.appendChild(col);
+            });
+            
+            content.appendChild(summaryDiv);
+            
+            // 発見事項
+            const findingsKey = analysisType === 'error-patterns' ? 'error_findings_count' :
+                               analysisType === 'payload-reflection' ? 'reflection_findings_count' :
+                               'delay_findings_count';
+            
+            if (data[findingsKey] > 0) {
+                const findingsTitle = document.createElement('h6');
+                findingsTitle.innerHTML = '<i class="fas fa-exclamation-triangle text-warning"></i> 検出された問題';
+                content.appendChild(findingsTitle);
+                
+                const findingsTable = createFindingsTable(analysisType, data.findings, jobId);
+                content.appendChild(findingsTable);
+            } else {
+                const noIssuesAlert = document.createElement('div');
+                noIssuesAlert.className = 'alert alert-success';
+                noIssuesAlert.innerHTML = '<i class="fas fa-check-circle"></i> 問題は検出されませんでした';
+                content.appendChild(noIssuesAlert);
+            }
+            
+            return content;
+        }
+
+        function getSummaryData(analysisType, data) {
+            switch (analysisType) {
+                case 'error-patterns':
+                    return [
+                        { label: '総リクエスト数', value: data.total_requests, color: 'primary' },
+                        { label: '分析済み', value: data.analyzed_requests, color: 'info' },
+                        { label: 'エラー検出', value: data.error_findings_count, color: data.error_findings_count > 0 ? 'danger' : 'success' },
+                        { label: 'チェックパターン', value: data.patterns_checked?.length || 0, color: 'secondary' }
+                    ];
+                case 'payload-reflection':
+                    return [
+                        { label: '総リクエスト数', value: data.total_requests, color: 'primary' },
+                        { label: '分析済み', value: data.analyzed_requests, color: 'info' },
+                        { label: '反射検出', value: data.reflection_findings_count, color: data.reflection_findings_count > 0 ? 'danger' : 'success' },
+                        { label: 'エンコード済み', value: data.encoding_summary?.encoded || 0, color: 'success' }
+                    ];
+                case 'time-delay':
+                    return [
+                        { label: '総リクエスト数', value: data.total_requests, color: 'primary' },
+                        { label: '分析済み', value: data.analyzed_requests, color: 'info' },
+                        { label: '遅延検出', value: data.delay_findings_count, color: data.delay_findings_count > 0 ? 'danger' : 'success' },
+                        { label: '平均時間', value: data.average_response_time ? data.average_response_time.toFixed(2) + 's' : 'N/A', color: 'secondary' }
+                    ];
+                default:
+                    return [];
+            }
+        }
+
+        function createFindingsTable(analysisType, findings, jobId) {
+            const tableDiv = document.createElement('div');
+            tableDiv.className = 'table-responsive';
+            
+            const table = document.createElement('table');
+            table.className = 'table table-sm table-striped';
+            
+            // ヘッダー
+            const thead = document.createElement('thead');
+            const headerRow = document.createElement('tr');
+            
+            const headers = getTableHeaders(analysisType);
+            headers.forEach(header => {
+                const th = document.createElement('th');
+                th.textContent = header;
+                headerRow.appendChild(th);
+            });
+            
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+            
+            // ボディ
+            const tbody = document.createElement('tbody');
+            
+            findings.forEach(finding => {
+                const row = document.createElement('tr');
+                const rowData = getTableRowData(analysisType, finding, jobId);
+                
+                rowData.forEach(cellData => {
+                    const td = document.createElement('td');
+                    if (cellData.className) td.className = cellData.className;
+                    if (cellData.html) {
+                        td.innerHTML = cellData.value;
+                    } else {
+                        td.textContent = cellData.value;
+                    }
+                    row.appendChild(td);
+                });
+                
+                tbody.appendChild(row);
+            });
+            
+            table.appendChild(tbody);
+            tableDiv.appendChild(table);
+            
+            return tableDiv;
+        }
+
+        function getTableHeaders(analysisType) {
+            switch (analysisType) {
+                case 'error-patterns':
+                    return ['リクエスト#', '深刻度', 'パターン', 'ペイロード', '証拠'];
+                case 'payload-reflection':
+                    return ['リクエスト#', '深刻度', '脆弱性タイプ', 'ペイロード', 'エンコーディング状況'];
+                case 'time-delay':
+                    return ['リクエスト#', '深刻度', '脆弱性タイプ', 'ペイロード', '遅延時間', 'ベースライン'];
+                default:
+                    return [];
+            }
+        }
+
+        function getTableRowData(analysisType, finding, jobId) {
+            const severityColor = finding.severity === 'high' ? 'danger' : 
+                                finding.severity === 'medium' ? 'warning' : 'info';
+            
+            // リクエスト番号をクリック可能にするためのHTMLを作成
+            const requestNumberHtml = `<a href="#" class="text-primary fw-bold request-number-link" onclick="showRequestDetailFromAnalysis(event, '${jobId}', ${finding.request_number})">${finding.request_number}</a>`;
+            
+            switch (analysisType) {
+                case 'error-patterns':
+                    return [
+                        { value: requestNumberHtml, html: true },
+                        { value: finding.severity.toUpperCase(), className: `text-${severityColor}`, html: true },
+                        { value: finding.error_pattern },
+                        { value: finding.payload ? finding.payload.substring(0, 30) + (finding.payload.length > 30 ? '...' : '') : 'N/A' },
+                        { value: finding.evidence ? finding.evidence.substring(0, 50) + (finding.evidence.length > 50 ? '...' : '') : 'N/A' }
+                    ];
+                case 'payload-reflection':
+                    return [
+                        { value: requestNumberHtml, html: true },
+                        { value: finding.severity.toUpperCase(), className: `text-${severityColor}`, html: true },
+                        { value: finding.vulnerability_type },
+                        { value: finding.payload ? finding.payload.substring(0, 30) + (finding.payload.length > 30 ? '...' : '') : 'N/A' },
+                        { value: finding.encoding_status }
+                    ];
+                case 'time-delay':
+                    return [
+                        { value: requestNumberHtml, html: true },
+                        { value: finding.severity.toUpperCase(), className: `text-${severityColor}`, html: true },
+                        { value: finding.vulnerability_type },
+                        { value: finding.payload ? finding.payload.substring(0, 30) + (finding.payload.length > 30 ? '...' : '') : 'N/A' },
+                        { value: finding.response_time ? finding.response_time.toFixed(3) + 's' : 'N/A' },
+                        { value: finding.baseline_time ? finding.baseline_time.toFixed(3) + 's' : 'N/A' }
+                    ];
+                default:
+                    return [];
+            }
+        }
+
+        // 脆弱性分析からリクエスト詳細を表示するための関数
+        function showRequestDetailFromAnalysis(event, jobId, requestNumber) {
+            event.preventDefault();
+            event.stopPropagation();
+            
+            // 既存のshowRequestDetailNew関数を使用してリクエスト詳細を表示
+            showRequestDetailNew(jobId, requestNumber);
+        }
+
+        // 現在表示中のジョブIDを取得する関数
+        function getCurrentJobId() {
+            // ジョブ詳細モーダルからジョブIDを取得
+            const jobDetailContent = document.getElementById('job-detail-content');
+            if (jobDetailContent) {
+                // ジョブIDを含むcodeタグを検索
+                const codeElements = jobDetailContent.querySelectorAll('code');
+                for (let code of codeElements) {
+                    const text = code.textContent.trim();
+                    // UUIDパターンにマッチするかチェック
+                    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(text)) {
+                        return text;
+                    }
+                }
+            }
+            return null;
+        }
     </script>
     
     <!-- Auth JavaScript -->
