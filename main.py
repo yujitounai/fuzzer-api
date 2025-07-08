@@ -1009,42 +1009,10 @@ async def intuitive_replace_placeholders(request: IntuitiveRequest, db: Session 
 @app.get("/")
 async def root():
     """
-    ルートエンドポイント
-    
-    APIの基本情報と利用可能なエンドポイントを提供します。
-    
-    Returns:
-        Dict[str, str]: APIの基本情報
+    ルートエンドポイント - 履歴ページにリダイレクト
     """
-    return {
-        "message": "プレースホルダ置換API",
-        "version": "1.0.0",
-        "endpoints": {
-            "POST /api/replace-placeholders": "プレースホルダ置換API（データベースに保存）",
-            "GET /api/history": "ファザーリクエストの履歴取得",
-            "GET /api/history/{id}": "特定のファザーリクエストの詳細取得",
-            "DELETE /api/history/{id}": "特定のファザーリクエストの削除",
-            "GET /api/statistics": "データベース統計情報",
-            "GET /test": "テスト用Webインターフェース",
-            "GET /history-page": "履歴表示用Webインターフェース",
-            "GET /docs": "APIドキュメント"
-        },
-        "strategies": [
-            "sniper - 各ペイロードを各位置に順番に配置",
-            "battering_ram - 同じペイロードを全ての位置に同時に配置",
-            "pitchfork - 各位置に異なるペイロードセットを使用し、同時に配置",
-            "cluster_bomb - 全てのペイロードの組み合わせをテスト"
-        ],
-        "database": {
-            "type": "SQLite",
-            "file": "fuzzer_requests.db",
-            "features": [
-                "リクエストと生成されたリクエストの永続化",
-                "履歴の表示と管理",
-                "統計情報の提供"
-            ]
-        }
-    }
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/history-page", status_code=302)
 
 @app.get("/api/history", response_model=List[FuzzerRequestResponse])
 async def get_history(db: Session = Depends(get_db), limit: int = 50, offset: int = 0, current_user: User = Depends(get_current_active_user)):
